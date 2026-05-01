@@ -89,3 +89,14 @@ export function formatWorkTime(minutes: number): string {
   const mins = minutes % 60
   return `${hours}時間${mins}分`
 }
+
+export interface WageHistory {
+  id: string
+  user_id: string
+  hourly_wage: number
+  effective_from: string
+  effective_to: string | null
+  note: string | null
+  created_by: string | null
+  created_at: string
+}

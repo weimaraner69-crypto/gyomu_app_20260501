@@ -377,6 +377,68 @@ async function updateStoreMembershipAction(formData: FormData) {
   revalidatePath('/admin')
 }
 
+async function addWageHistoryAction(formData: FormData) {
+  'use server'
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || !['owner', 'manager'].includes(profile.role)) {
+    redirect('/admin')
+  }
+
+  const targetId = String(formData.get('target_id') ?? '')
+  const hourlyWageRaw = String(formData.get('hourly_wage') ?? '')
+  const effectiveFrom = String(formData.get('effective_from') ?? '')
+  const note = String(formData.get('note') ?? '').trim()
+
+  if (!targetId || !hourlyWageRaw || !effectiveFrom) {
+    revalidatePath('/admin')
+    return
+  }
+
+  const hourlyWage = parseInt(hourlyWageRaw, 10)
+  if (isNaN(hourlyWage) || hourlyWage < 0) {
+    revalidatePath('/admin')
+    return
+  }
+
+  // 既存の未終了履歴を終了させる
+  await supabase
+    .from('wage_histories')
+    .update({ effective_to: effectiveFrom })
+    .eq('user_id', targetId)
+    .is('effective_to', null)
+    .lt('effective_from', effectiveFrom)
+
+  // 新しい時給履歴を挿入
+  await supabase
+    .from('wage_histories')
+    .insert({
+      user_id: targetId,
+      hourly_wage: hourlyWage,
+      effective_from: effectiveFrom,
+      effective_to: null,
+      note: note || null,
+      created_by: user.id,
+    })
+
+  // profiles.hourly_wage も更新
+  await supabase
+    .from('profiles')
+    .update({ hourly_wage: hourlyWage })
+    .eq('id', targetId)
+
+  revalidatePath('/admin')
+}
+
 type StoreRow = {
   id: string
   name: string
@@ -488,6 +550,28 @@ export default async function AdminPage() {
 
   const profileMap = new Map((profileRows ?? []).map((p) => [p.id, p]))
   const canEditAttendance = profile.role === 'owner' || profile.role === 'manager'
+
+  // 時給履歴
+  const empIds = allEmployees.map((e) => e.id)
+  const { data: wageHistoriesRaw } = empIds.length
+    ? await supabase
+      .from('wage_histories')
+      .select('id, user_id, hourly_wage, effective_from, effective_to, note, created_by, created_at')
+      .in('user_id', empIds)
+      .order('effective_from', { ascending: false })
+    : { data: [] }
+
+  type WageHistoryRow = {
+    id: string; user_id: string; hourly_wage: number
+    effective_from: string; effective_to: string | null; note: string | null
+    created_by: string | null; created_at: string
+  }
+  const wageHistories = (wageHistoriesRaw ?? []) as WageHistoryRow[]
+  const wageHistoryMap = new Map<string, WageHistoryRow[]>()
+  for (const wh of wageHistories) {
+    if (!wageHistoryMap.has(wh.user_id)) wageHistoryMap.set(wh.user_id, [])
+    wageHistoryMap.get(wh.user_id)!.push(wh)
+  }
 
   // 月間集計
   const summary: Record<string, { name: string; department: string | null; workDays: number; totalMinutes: number }> = {}
@@ -667,6 +751,59 @@ export default async function AdminPage() {
                             <ResetPasswordButton targetId={emp.id} targetName={emp.full_name} />
                           </div>
                         </form>
+
+                        {/* 時給履歴 */}
+                        <div className="mt-3 border-t border-slate-100 pt-2">
+                          <p className="text-xs font-medium text-slate-500 mb-1">時給変更履歴</p>
+                          <div className="space-y-1 mb-2">
+                            {(wageHistoryMap.get(emp.id) ?? []).slice(0, 5).map((wh) => (
+                              <div key={wh.id} className="flex items-center gap-2 text-xs text-slate-600">
+                                <span className="text-slate-400">{format(new Date(wh.effective_from + 'T00:00:00'), 'yyyy/MM/dd', { locale: ja })}</span>
+                                <span className="font-medium">¥{wh.hourly_wage.toLocaleString()}</span>
+                                {wh.effective_to && <span className="text-slate-400">〜 {format(new Date(wh.effective_to + 'T00:00:00'), 'yyyy/MM/dd', { locale: ja })}</span>}
+                                {!wh.effective_to && <span className="text-green-600">現在</span>}
+                                {wh.note && <span className="text-slate-400">({wh.note})</span>}
+                              </div>
+                            ))}
+                            {(wageHistoryMap.get(emp.id) ?? []).length === 0 && (
+                              <p className="text-xs text-slate-400">履歴なし</p>
+                            )}
+                          </div>
+                          <form action={addWageHistoryAction} className="grid grid-cols-2 gap-1.5">
+                            <input type="hidden" name="target_id" value={emp.id} />
+                            <div>
+                              <label className="text-xs text-slate-400 block mb-0.5">新しい時給</label>
+                              <input
+                                type="number"
+                                name="hourly_wage"
+                                placeholder="例: 1200"
+                                min={0}
+                                required
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400 block mb-0.5">適用開始日</label>
+                              <input
+                                type="date"
+                                name="effective_from"
+                                required
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <input
+                                type="text"
+                                name="note"
+                                placeholder="メモ（任意）"
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs">時給を登録</Button>
+                            </div>
+                          </form>
+                        </div>
                       </details>
                     )}
                   </CardContent>
