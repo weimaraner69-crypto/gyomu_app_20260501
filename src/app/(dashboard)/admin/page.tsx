@@ -63,6 +63,14 @@ const STATUS_LABEL: Record<string, { label: string; variant: 'default' | 'second
 const NIGHT_START_HOUR = 22
 const NIGHT_END_HOUR = 5
 
+function getBusinessDate(now: Date): string {
+  const base = new Date(now)
+  if (base.getHours() < 5) {
+    base.setDate(base.getDate() - 1)
+  }
+  return format(base, 'yyyy-MM-dd')
+}
+
 function parseTimeValue(date: string, timeValue: string): Date | null {
   if (!timeValue) return null
   return new Date(`${date}T${timeValue}:00+09:00`)
@@ -198,6 +206,7 @@ export default async function AdminPage() {
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const firstDay = `${year}-${month}-01`
   const lastDay = `${year}-${month}-31`
+  const businessDate = getBusinessDate(now)
 
   const { data: records } = await supabase
     .from('attendance')
@@ -207,6 +216,9 @@ export default async function AdminPage() {
     .order('date', { ascending: false })
 
   const typedRecords = (records ?? []) as AttendanceRow[]
+  const unclockedRecords = typedRecords.filter(
+    (row) => !!row.clock_in && !row.clock_out && row.date < businessDate
+  )
   const userIds = Array.from(new Set(typedRecords.map((row) => row.user_id)))
 
   const { data: auditRowsRaw } = await supabase
@@ -269,6 +281,59 @@ export default async function AdminPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        {/* 未退勤アラート */}
+        {unclockedRecords.length > 0 && (
+          <div>
+            <h2 className="text-sm font-medium text-red-600 mb-3">未退勤アラート</h2>
+            <Card className="shadow-sm border-red-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base text-red-700">{unclockedRecords.length}件の未退勤があります</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {unclockedRecords.map((row) => {
+                  const rowProfile = profileMap.get(row.user_id)
+                  return (
+                    <form key={row.id} action={updateAttendanceAction} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-center rounded-md border border-red-100 p-3 bg-red-50/40">
+                      <input type="hidden" name="id" value={row.id} />
+                      <input type="hidden" name="date" value={row.date} />
+                      <input type="hidden" name="clock_in_time" value={row.clock_in ? format(new Date(row.clock_in), 'HH:mm') : ''} />
+                      <div className="md:col-span-2 text-sm">
+                        <p className="font-medium">{rowProfile?.full_name ?? '不明なユーザー'}</p>
+                        <p className="text-slate-600">{format(new Date(row.date + 'T00:00:00'), 'M/d (E)', { locale: ja })}</p>
+                      </div>
+                      <div className="text-sm text-slate-700">出勤 {row.clock_in ? format(new Date(row.clock_in), 'HH:mm') : '-'}</div>
+                      <input
+                        type="time"
+                        name="clock_out_time"
+                        className="h-8 rounded-md border border-slate-300 px-2 text-xs"
+                      />
+                      <select
+                        name="status"
+                        defaultValue={row.status}
+                        className="h-8 rounded-md border border-slate-300 px-2 text-xs"
+                      >
+                        <option value="present">出勤</option>
+                        <option value="absent">欠勤</option>
+                        <option value="late">遅刻</option>
+                        <option value="early_leave">早退</option>
+                        <option value="holiday">休暇</option>
+                      </select>
+                      <input
+                        type="text"
+                        name="note"
+                        defaultValue={row.note ?? ''}
+                        placeholder="未退勤の補正理由"
+                        className="h-8 rounded-md border border-slate-300 px-2 text-xs"
+                      />
+                      <Button type="submit" size="sm" className="md:col-span-1">補正保存</Button>
+                    </form>
+                  )
+                })}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* 月間集計カード */}
         <div>
           <h2 className="text-sm font-medium text-slate-500 mb-3">月間サマリー</h2>
@@ -322,6 +387,9 @@ export default async function AdminPage() {
                       <TableCell className="text-sm">{row.work_minutes != null ? formatWorkTime(row.work_minutes) : '-'}</TableCell>
                       <TableCell>
                         <Badge variant={st.variant}>{st.label}</Badge>
+                        {!!row.clock_in && !row.clock_out && row.date < businessDate && (
+                          <Badge variant="destructive" className="ml-2">未退勤</Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         {canEditAttendance ? (
