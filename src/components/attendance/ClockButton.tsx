@@ -47,7 +47,7 @@ function calcNightMinutes(clockIn: Date, clockOut: Date): number {
   return total
 }
 
-export function ClockButton({ userId }: { userId: string }) {
+export function ClockButton({ userId, storeId }: { userId: string; storeId: string | null }) {
   const [today, setToday] = useState<Attendance | null>(null)
   const [now, setNow] = useState(new Date())
   const [loading, setLoading] = useState(false)
@@ -60,23 +60,26 @@ export function ClockButton({ userId }: { userId: string }) {
   useEffect(() => {
     const fetchToday = async () => {
       const supabase = createClient()
-      const { data } = await supabase
+      let query = supabase
         .from('attendance')
         .select('*')
         .eq('user_id', userId)
         .eq('date', getBusinessDate(new Date()))
-        .single()
+      query = storeId ? query.eq('store_id', storeId) : query.is('store_id', null)
+      const { data } = await query.single()
       setToday(data)
     }
     fetchToday()
-  }, [userId])
+  }, [userId, storeId])
 
   const handleClockIn = async () => {
+    if (!storeId) return
     setLoading(true)
     const supabase = createClient()
     try {
       const { data } = await supabase.from('attendance').upsert({
         user_id: userId,
+        store_id: storeId,
         date: getBusinessDate(new Date()),
         clock_in: new Date().toISOString(),
         status: 'present'
@@ -88,7 +91,7 @@ export function ClockButton({ userId }: { userId: string }) {
   }
 
   const handleClockOut = async () => {
-    if (!today?.clock_in) return
+    if (!today?.clock_in || !storeId) return
     setLoading(true)
     const supabase = createClient()
     try {
@@ -123,6 +126,9 @@ export function ClockButton({ userId }: { userId: string }) {
         </div>
 
         <div className="text-sm text-slate-600 space-y-1 min-h-[3rem]">
+          {!storeId && (
+            <p className="text-amber-700">店舗所属が未設定のため打刻できません</p>
+          )}
           {today?.clock_in && (
             <p>出勤: <span className="font-semibold">{format(new Date(today.clock_in), 'HH:mm')}</span></p>
           )}
@@ -134,7 +140,7 @@ export function ClockButton({ userId }: { userId: string }) {
         {!today?.clock_in ? (
           <Button
             onClick={handleClockIn}
-            disabled={loading}
+            disabled={loading || !storeId}
             size="lg"
             className="w-full bg-green-600 hover:bg-green-700 text-white text-lg font-bold tracking-widest"
           >
@@ -143,7 +149,7 @@ export function ClockButton({ userId }: { userId: string }) {
         ) : !today?.clock_out ? (
           <Button
             onClick={handleClockOut}
-            disabled={loading}
+            disabled={loading || !storeId}
             size="lg"
             variant="outline"
             className="w-full border-red-300 text-red-600 hover:bg-red-50 text-lg font-bold tracking-widest"

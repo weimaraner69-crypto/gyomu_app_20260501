@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/table'
 import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
-import { formatWorkTime } from '@/types'
+import { canAccessManagement, formatWorkTime } from '@/types'
 import type { Profile } from '@/types'
 
 type AttendanceRow = {
@@ -46,7 +46,7 @@ export default async function AdminPage() {
     .eq('id', user.id)
     .single<Profile>()
 
-  if (profile?.role !== 'admin') redirect('/dashboard')
+  if (!canAccessManagement(profile?.role)) redirect('/dashboard')
 
   const now = new Date()
   const year = now.getFullYear()

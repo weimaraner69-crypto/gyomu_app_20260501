@@ -1,4 +1,10 @@
-export type UserRole = 'admin' | 'member'
+export type UserRole = 'owner' | 'manager' | 'labor_consultant' | 'staff'
+
+export const MANAGEMENT_ROLES: UserRole[] = ['owner', 'manager', 'labor_consultant']
+
+export function canAccessManagement(role: UserRole | null | undefined): boolean {
+  return !!role && MANAGEMENT_ROLES.includes(role)
+}
 
 export interface Profile {
   id: string
@@ -8,9 +14,25 @@ export interface Profile {
   created_at: string
 }
 
+export interface Store {
+  id: string
+  code: string
+  name: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface UserStoreMembership {
+  id: string
+  user_id: string
+  store_id: string
+  created_at: string
+}
+
 export interface Attendance {
   id: string
   user_id: string
+  store_id: string | null
   date: string
   clock_in: string | null
   clock_out: string | null
@@ -24,6 +46,7 @@ export interface Attendance {
 export interface DailyReport {
   id: string
   user_id: string
+  store_id: string | null
   date: string
   attendance_id: string | null
   tasks_done: string

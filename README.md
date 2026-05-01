@@ -43,6 +43,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 この SQL で以下を作成します。
 
 - `profiles` テーブル
+- `stores` テーブル
+- `user_store_memberships` テーブル
 - `attendance` テーブル
 - `daily_reports` テーブル
 - RLS ポリシー
@@ -52,12 +54,18 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 すでに `supabase-setup.sql` を実行済みの環境では、以下の順で追加 SQL を実行してください。
 
-1. `supabase-hotfix-rls-recursion.sql`
-2. `supabase-hotfix-phase1-alignment.sql`
+1. `supabase-hotfix-role-model.sql`
+2. `supabase-hotfix-store-model.sql`
+3. `supabase-hotfix-rls-recursion.sql`
+4. `supabase-hotfix-store-scope-rls.sql`
+5. `supabase-hotfix-phase1-alignment.sql`
 
 これにより、以下が反映されます。
 
+- `profiles.role` を4ロールモデルへ移行（`owner` / `manager` / `labor_consultant` / `staff`）
+- `stores` / `user_store_memberships` と `store_id`（attendance/daily_reports）を追加
 - `profiles` ポリシーの再帰エラー修正
+- 店舗スコープのRLS（owner/manager/labor_consultant/staff）を適用
 - `attendance.night_minutes` 追加
 - 休憩関連の旧列を未使用化（Phase1仕様に整合）
 
@@ -87,17 +95,17 @@ npm run start
 
 ## 備考
 
-- 管理者画面にアクセスするには、`profiles.role` を `admin` に設定してください。
+- 管理画面にアクセスできるロールは `owner` / `manager` / `labor_consultant` です。
 - 勤務時間は「退勤時刻 - 出勤時刻」の分単位で計算します。
 - 深夜時間（22:00〜翌05:00）は `night_minutes` として分単位で保存します。
 
 ## 管理者ユーザー設定手順
 
-初回は全ユーザーが `member` で作成されます。管理者にしたいユーザーを 1 名選び、Supabase SQL Editor で次を実行してください。
+初回は全ユーザーが `staff` で作成されます。管理権限を付与したいユーザーを選び、Supabase SQL Editor で次を実行してください。
 
 ```sql
 update profiles
-set role = 'admin'
+set role = 'owner'
 where id = '対象ユーザーのUUID';
 ```
 

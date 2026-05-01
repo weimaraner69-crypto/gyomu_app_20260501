@@ -5,7 +5,12 @@ import { DailyReportForm } from '@/components/attendance/DailyReportForm'
 import { Button } from '@/components/ui/button'
 import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
-import type { Profile } from '@/types'
+import { canAccessManagement, type Profile } from '@/types'
+
+type MembershipRow = {
+  store_id: string
+  stores: { name: string } | null
+}
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -18,6 +23,16 @@ export default async function DashboardPage() {
     .eq('id', user.id)
     .single<Profile>()
 
+  const { data: memberships } = await supabase
+    .from('user_store_memberships')
+    .select('store_id, stores(name)')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: true })
+
+  const typedMemberships = (memberships ?? []) as MembershipRow[]
+  const currentStoreId = typedMemberships[0]?.store_id ?? null
+  const currentStoreName = typedMemberships[0]?.stores?.name ?? null
+
   const today = format(new Date(), 'yyyy-MM-dd')
 
   return (
@@ -29,10 +44,11 @@ export default async function DashboardPage() {
           <p className="text-sm text-slate-500">
             {format(new Date(), 'yyyy年MM月dd日 (E)', { locale: ja })}
           </p>
+          {currentStoreName && <p className="text-xs text-slate-500">現在店舗: {currentStoreName}</p>}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-600">{profile?.full_name ?? user.email}</span>
-          {profile?.role === 'admin' && (
+          {canAccessManagement(profile?.role) && (
             <a href="/admin">
               <Button variant="outline" size="sm">管理画面</Button>
             </a>
@@ -45,8 +61,8 @@ export default async function DashboardPage() {
 
       {/* メインコンテンツ */}
       <main className="max-w-2xl mx-auto px-6 py-8 space-y-8">
-        <ClockButton userId={user.id} />
-        <DailyReportForm userId={user.id} date={today} />
+        <ClockButton userId={user.id} storeId={currentStoreId} />
+        <DailyReportForm userId={user.id} storeId={currentStoreId} date={today} />
       </main>
     </div>
   )

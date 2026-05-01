@@ -11,7 +11,7 @@ AS $$
     SELECT 1
     FROM public.profiles
     WHERE id = auth.uid()
-      AND role = 'admin'
+      AND role IN ('owner', 'manager', 'labor_consultant')
   );
 $$;
 
@@ -27,5 +27,11 @@ CREATE POLICY "管理者は全員の勤怠を閲覧"
 DROP POLICY IF EXISTS "管理者は全プロフィールを閲覧" ON profiles;
 CREATE POLICY "管理者は全プロフィールを閲覧"
   ON profiles
+  FOR SELECT
+  USING (public.is_admin());
+
+DROP POLICY IF EXISTS "管理者は全所属を閲覧" ON user_store_memberships;
+CREATE POLICY "管理者は全所属を閲覧"
+  ON user_store_memberships
   FOR SELECT
   USING (public.is_admin());

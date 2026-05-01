@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/client'
 import type { DailyReport } from '@/types'
 
-export function DailyReportForm({ userId, date }: { userId: string; date: string }) {
+export function DailyReportForm({ userId, storeId, date }: { userId: string; storeId: string | null; date: string }) {
   const [form, setForm] = useState({
     tasks_done: '',
     achievements: '',
@@ -21,12 +21,13 @@ export function DailyReportForm({ userId, date }: { userId: string; date: string
   useEffect(() => {
     const fetch = async () => {
       const supabase = createClient()
-      const { data } = await supabase
+      let query = supabase
         .from('daily_reports')
         .select('*')
         .eq('user_id', userId)
         .eq('date', date)
-        .single()
+      query = storeId ? query.eq('store_id', storeId) : query.is('store_id', null)
+      const { data } = await query.single()
       if (data) {
         setExisting(data)
         setForm({
@@ -39,16 +40,18 @@ export function DailyReportForm({ userId, date }: { userId: string; date: string
       }
     }
     fetch()
-  }, [userId, date])
+  }, [userId, storeId, date])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!storeId) return
     setLoading(true)
     const supabase = createClient()
     try {
       await supabase.from('daily_reports').upsert({
         ...(existing ? { id: existing.id } : {}),
         user_id: userId,
+        store_id: storeId,
         date,
         ...form,
         submitted_at: new Date().toISOString()
@@ -65,6 +68,16 @@ export function DailyReportForm({ userId, date }: { userId: string; date: string
         <CardContent className="pt-6 text-center py-12">
           <p className="text-green-600 font-medium text-lg">✓ 日報を提出しました</p>
           <p className="text-sm text-slate-500 mt-1">お疲れ様でした！</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!storeId) {
+    return (
+      <Card className="shadow-sm">
+        <CardContent className="pt-6 text-center py-10">
+          <p className="text-amber-700 font-medium">店舗所属が未設定のため日報を提出できません</p>
         </CardContent>
       </Card>
     )

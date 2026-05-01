@@ -3,14 +3,33 @@ CREATE TABLE profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT NOT NULL,
   department TEXT,
-  role TEXT DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+  role TEXT DEFAULT 'staff' CHECK (role IN ('owner', 'manager', 'labor_consultant', 'staff')),
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 店舗マスタ
+CREATE TABLE stores (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 従業員の店舗所属（兼務対応）
+CREATE TABLE user_store_memberships (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, store_id)
 );
 
 -- 出退勤記録
 CREATE TABLE attendance (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  store_id UUID REFERENCES stores(id),
   date DATE NOT NULL,
   clock_in TIMESTAMPTZ,
   clock_out TIMESTAMPTZ,
@@ -21,13 +40,14 @@ CREATE TABLE attendance (
   ),
   note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, date)
+  UNIQUE(user_id, store_id, date)
 );
 
 -- 日報
 CREATE TABLE daily_reports (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  store_id UUID REFERENCES stores(id),
   date DATE NOT NULL,
   attendance_id UUID REFERENCES attendance(id),
   tasks_done TEXT NOT NULL,
@@ -38,47 +58,207 @@ CREATE TABLE daily_reports (
   reviewed_at TIMESTAMPTZ,
   reviewed_by UUID REFERENCES auth.users(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, date)
+  UNIQUE(user_id, store_id, date)
 );
 
 -- RLS有効化
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_store_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_reports ENABLE ROW LEVEL SECURITY;
 
--- profiles: 自分のデータのみ操作可能
-CREATE POLICY "自分のプロフィールのみ" ON profiles FOR ALL USING (auth.uid() = id);
+-- ロール取得（SECURITY DEFINERでRLS再帰を回避）
+CREATE OR REPLACE FUNCTION public.current_role()
+RETURNS TEXT
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT role
+  FROM public.profiles
+  WHERE id = auth.uid();
+$$;
 
--- attendance: 自分のデータのみ
-CREATE POLICY "自分の勤怠のみ" ON attendance FOR ALL USING (auth.uid() = user_id);
-
--- daily_reports: 自分のデータのみ
-CREATE POLICY "自分の日報のみ" ON daily_reports FOR ALL USING (auth.uid() = user_id);
-
--- 管理者判定（SECURITY DEFINERでRLS再帰を回避）
-CREATE OR REPLACE FUNCTION public.is_admin()
+-- 管理ロール判定
+CREATE OR REPLACE FUNCTION public.is_management_role()
 RETURNS BOOLEAN
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.profiles
-    WHERE id = auth.uid()
-      AND role = 'admin'
-  );
+  SELECT public.current_role() IN ('owner', 'manager', 'labor_consultant');
 $$;
 
-REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+-- 店舗アクセス可否判定
+CREATE OR REPLACE FUNCTION public.can_access_store(target_store_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN public.current_role() IN ('owner', 'labor_consultant') THEN TRUE
+    WHEN target_store_id IS NULL THEN FALSE
+    ELSE EXISTS (
+      SELECT 1
+      FROM public.user_store_memberships m
+      WHERE m.user_id = auth.uid()
+        AND m.store_id = target_store_id
+    )
+  END;
+$$;
 
--- 管理者はattendanceとprofilesを全件閲覧可能
-CREATE POLICY "管理者は全員の勤怠を閲覧" ON attendance FOR SELECT
-  USING (public.is_admin());
+REVOKE ALL ON FUNCTION public.current_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_management_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.can_access_store(UUID) FROM PUBLIC;
 
-CREATE POLICY "管理者は全プロフィールを閲覧" ON profiles FOR SELECT
-  USING (public.is_admin());
+GRANT EXECUTE ON FUNCTION public.current_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_management_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.can_access_store(UUID) TO authenticated;
+
+-- profiles: 自分のデータ更新は許可
+CREATE POLICY "自分のプロフィール更新" ON profiles
+  FOR ALL
+  USING (auth.uid() = id);
+
+-- profiles: 管理ロールの閲覧制御
+CREATE POLICY "管理ロールのプロフィール閲覧" ON profiles
+  FOR SELECT
+  USING (
+    public.current_role() IN ('owner', 'labor_consultant')
+    OR (
+      public.current_role() = 'manager'
+      AND EXISTS (
+        SELECT 1
+        FROM public.user_store_memberships me
+        JOIN public.user_store_memberships target
+          ON me.store_id = target.store_id
+        WHERE me.user_id = auth.uid()
+          AND target.user_id = profiles.id
+      )
+    )
+  );
+
+-- stores: 自分がアクセス可能な店舗のみ参照
+CREATE POLICY "自分が参照可能な店舗" ON stores
+  FOR SELECT
+  TO authenticated
+  USING (public.can_access_store(stores.id));
+
+-- 所属情報: 自分の所属は参照可能
+CREATE POLICY "自分の所属店舗のみ" ON user_store_memberships
+  FOR SELECT
+  USING (auth.uid() = user_id);
+
+-- 所属情報: 管理ロールは店舗範囲で参照可能
+CREATE POLICY "管理ロールの所属閲覧" ON user_store_memberships
+  FOR SELECT
+  USING (
+    public.current_role() IN ('owner', 'labor_consultant')
+    OR (
+      public.current_role() = 'manager'
+      AND public.can_access_store(store_id)
+    )
+  );
+
+-- attendance: 参照は店舗スコープ + ロール制御
+CREATE POLICY "勤怠参照ルール" ON attendance
+  FOR SELECT
+  USING (
+    (auth.uid() = user_id AND (store_id IS NULL OR public.can_access_store(store_id)))
+    OR (
+      public.is_management_role()
+      AND public.can_access_store(store_id)
+    )
+  );
+
+-- attendance: 登録は本人、またはオーナー/店長
+CREATE POLICY "勤怠登録ルール" ON attendance
+  FOR INSERT
+  WITH CHECK (
+    (
+      auth.uid() = user_id
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+    OR (
+      public.current_role() IN ('owner', 'manager')
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+  );
+
+-- attendance: 更新は本人、またはオーナー/店長
+CREATE POLICY "勤怠更新ルール" ON attendance
+  FOR UPDATE
+  USING (
+    (
+      auth.uid() = user_id
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+    OR (
+      public.current_role() IN ('owner', 'manager')
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+  )
+  WITH CHECK (
+    (
+      auth.uid() = user_id
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+    OR (
+      public.current_role() IN ('owner', 'manager')
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+  );
+
+-- daily_reports: 参照は店舗スコープ + ロール制御
+CREATE POLICY "日報参照ルール" ON daily_reports
+  FOR SELECT
+  USING (
+    (auth.uid() = user_id AND (store_id IS NULL OR public.can_access_store(store_id)))
+    OR (
+      public.is_management_role()
+      AND public.can_access_store(store_id)
+    )
+  );
+
+-- daily_reports: 登録は本人、またはオーナー/店長
+CREATE POLICY "日報登録ルール" ON daily_reports
+  FOR INSERT
+  WITH CHECK (
+    (
+      auth.uid() = user_id
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+    OR (
+      public.current_role() IN ('owner', 'manager')
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+  );
+
+-- daily_reports: 更新は本人、またはオーナー/店長
+CREATE POLICY "日報更新ルール" ON daily_reports
+  FOR UPDATE
+  USING (
+    (
+      auth.uid() = user_id
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+    OR (
+      public.current_role() IN ('owner', 'manager')
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+  )
+  WITH CHECK (
+    (
+      auth.uid() = user_id
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+    OR (
+      public.current_role() IN ('owner', 'manager')
+      AND (store_id IS NULL OR public.can_access_store(store_id))
+    )
+  );
 
 -- ユーザー登録時にprofilesレコードを自動作成するトリガー
 CREATE OR REPLACE FUNCTION handle_new_user()
