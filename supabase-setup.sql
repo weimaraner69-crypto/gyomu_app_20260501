@@ -14,9 +14,8 @@ CREATE TABLE attendance (
   date DATE NOT NULL,
   clock_in TIMESTAMPTZ,
   clock_out TIMESTAMPTZ,
-  break_started_at TIMESTAMPTZ,
   work_minutes INTEGER,
-  break_minutes INTEGER DEFAULT 0,
+  night_minutes INTEGER DEFAULT 0,
   status TEXT DEFAULT 'present' CHECK (
     status IN ('present', 'absent', 'late', 'early_leave', 'holiday')
   ),

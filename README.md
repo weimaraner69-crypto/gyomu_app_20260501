@@ -5,7 +5,7 @@
 ## 主な機能
 
 - メールアドレスとパスワードでのログイン
-- スタッフの出勤・休憩入り・休憩戻り・退勤打刻
+- スタッフの出勤・退勤打刻
 - 当日の日報提出
 - 管理者向けの月間勤怠サマリーと打刻履歴表示
 
@@ -53,13 +53,13 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 すでに `supabase-setup.sql` を実行済みの環境では、以下の順で追加 SQL を実行してください。
 
 1. `supabase-hotfix-rls-recursion.sql`
-2. `supabase-hotfix-break-tracking.sql`
+2. `supabase-hotfix-phase1-alignment.sql`
 
 これにより、以下が反映されます。
 
 - `profiles` ポリシーの再帰エラー修正
-- `attendance.break_started_at` 追加
-- `attendance.break_minutes` のデフォルトを `0` へ変更
+- `attendance.night_minutes` 追加
+- 休憩関連の旧列を未使用化（Phase1仕様に整合）
 
 ## 開発サーバー起動
 
@@ -88,8 +88,8 @@ npm run start
 ## 備考
 
 - 管理者画面にアクセスするには、`profiles.role` を `admin` に設定してください。
-- 勤務時間は「退勤時刻 - 出勤時刻 - 休憩実績時間」で計算します。
-- 休憩時間は `休憩入り` から `休憩戻り` までの実績を分単位で加算します。
+- 勤務時間は「退勤時刻 - 出勤時刻」の分単位で計算します。
+- 深夜時間（22:00〜翌05:00）は `night_minutes` として分単位で保存します。
 
 ## 管理者ユーザー設定手順
 

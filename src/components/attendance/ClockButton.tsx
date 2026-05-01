@@ -7,12 +7,50 @@ import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import type { Attendance } from '@/types'
 
+const NIGHT_START_HOUR = 22
+const NIGHT_END_HOUR = 5
+
+function getBusinessDate(now: Date): string {
+  const base = new Date(now)
+  if (base.getHours() < 5) {
+    base.setDate(base.getDate() - 1)
+  }
+  return format(base, 'yyyy-MM-dd')
+}
+
+function calcMinutesDiff(start: Date, end: Date): number {
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000 / 60))
+}
+
+function calcNightMinutes(clockIn: Date, clockOut: Date): number {
+  let total = 0
+  const cursor = new Date(clockIn)
+  cursor.setHours(0, 0, 0, 0)
+  cursor.setDate(cursor.getDate() - 1)
+
+  while (cursor <= clockOut) {
+    const nightStart = new Date(cursor)
+    nightStart.setHours(NIGHT_START_HOUR, 0, 0, 0)
+    const nightEnd = new Date(cursor)
+    nightEnd.setDate(nightEnd.getDate() + 1)
+    nightEnd.setHours(NIGHT_END_HOUR, 0, 0, 0)
+
+    const overlapStart = Math.max(clockIn.getTime(), nightStart.getTime())
+    const overlapEnd = Math.min(clockOut.getTime(), nightEnd.getTime())
+    if (overlapEnd > overlapStart) {
+      total += Math.floor((overlapEnd - overlapStart) / 1000 / 60)
+    }
+
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return total
+}
+
 export function ClockButton({ userId }: { userId: string }) {
   const [today, setToday] = useState<Attendance | null>(null)
   const [now, setNow] = useState(new Date())
   const [loading, setLoading] = useState(false)
-
-  const totalBreakMinutes = today?.break_minutes ?? 0
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000)
@@ -26,7 +64,7 @@ export function ClockButton({ userId }: { userId: string }) {
         .from('attendance')
         .select('*')
         .eq('user_id', userId)
-        .eq('date', format(new Date(), 'yyyy-MM-dd'))
+        .eq('date', getBusinessDate(new Date()))
         .single()
       setToday(data)
     }
@@ -39,7 +77,7 @@ export function ClockButton({ userId }: { userId: string }) {
     try {
       const { data } = await supabase.from('attendance').upsert({
         user_id: userId,
-        date: format(new Date(), 'yyyy-MM-dd'),
+        date: getBusinessDate(new Date()),
         clock_in: new Date().toISOString(),
         status: 'present'
       }).select().single()
@@ -50,54 +88,19 @@ export function ClockButton({ userId }: { userId: string }) {
   }
 
   const handleClockOut = async () => {
-    if (!today?.clock_in || today.break_started_at) return
+    if (!today?.clock_in) return
     setLoading(true)
     const supabase = createClient()
     try {
       const clockIn = new Date(today.clock_in)
       const clockOut = new Date()
-      const workMinutes = Math.floor((clockOut.getTime() - clockIn.getTime()) / 1000 / 60)
-      const netWorkMinutes = Math.max(0, workMinutes - totalBreakMinutes)
+      const workMinutes = calcMinutesDiff(clockIn, clockOut)
+      const nightMinutes = calcNightMinutes(clockIn, clockOut)
       const { data } = await supabase.from('attendance')
         .update({
           clock_out: clockOut.toISOString(),
-          work_minutes: netWorkMinutes
-        })
-        .eq('id', today.id)
-        .select().single()
-      setToday(data)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleBreakStart = async () => {
-    if (!today?.clock_in || today.clock_out || today.break_started_at) return
-    setLoading(true)
-    const supabase = createClient()
-    try {
-      const { data } = await supabase.from('attendance')
-        .update({ break_started_at: new Date().toISOString() })
-        .eq('id', today.id)
-        .select().single()
-      setToday(data)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleBreakEnd = async () => {
-    if (!today?.break_started_at) return
-    setLoading(true)
-    const supabase = createClient()
-    try {
-      const breakStart = new Date(today.break_started_at)
-      const breakEnd = new Date()
-      const addMinutes = Math.max(0, Math.floor((breakEnd.getTime() - breakStart.getTime()) / 1000 / 60))
-      const { data } = await supabase.from('attendance')
-        .update({
-          break_started_at: null,
-          break_minutes: totalBreakMinutes + addMinutes
+          work_minutes: workMinutes,
+          night_minutes: nightMinutes
         })
         .eq('id', today.id)
         .select().single()
@@ -123,12 +126,6 @@ export function ClockButton({ userId }: { userId: string }) {
           {today?.clock_in && (
             <p>出勤: <span className="font-semibold">{format(new Date(today.clock_in), 'HH:mm')}</span></p>
           )}
-          {today?.break_started_at && (
-            <p>休憩中: <span className="font-semibold">{format(new Date(today.break_started_at), 'HH:mm')}〜</span></p>
-          )}
-          {(today?.clock_in || today?.clock_out) && (
-            <p>休憩合計: <span className="font-semibold">{totalBreakMinutes}分</span></p>
-          )}
           {today?.clock_out && (
             <p>退勤: <span className="font-semibold">{format(new Date(today.clock_out), 'HH:mm')}</span></p>
           )}
@@ -143,36 +140,16 @@ export function ClockButton({ userId }: { userId: string }) {
           >
             出　勤
           </Button>
-        ) : today.break_started_at ? (
+        ) : !today?.clock_out ? (
           <Button
-            onClick={handleBreakEnd}
+            onClick={handleClockOut}
             disabled={loading}
             size="lg"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold tracking-widest"
+            variant="outline"
+            className="w-full border-red-300 text-red-600 hover:bg-red-50 text-lg font-bold tracking-widest"
           >
-            休憩戻り
+            退　勤
           </Button>
-        ) : !today?.clock_out ? (
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              onClick={handleBreakStart}
-              disabled={loading}
-              size="lg"
-              variant="outline"
-              className="w-full border-amber-300 text-amber-700 hover:bg-amber-50 text-base font-bold tracking-widest"
-            >
-              休憩入り
-            </Button>
-            <Button
-              onClick={handleClockOut}
-              disabled={loading}
-              size="lg"
-              variant="outline"
-              className="w-full border-red-300 text-red-600 hover:bg-red-50 text-base font-bold tracking-widest"
-            >
-              退　勤
-            </Button>
-          </div>
         ) : (
           <p className="text-sm text-slate-500 py-2">本日の打刻完了</p>
         )}

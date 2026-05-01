@@ -1,5 +1,6 @@
--- 休憩60分固定を廃止し、実績記録方式へ変更
--- 実行対象: 既に supabase-setup.sql を適用済みの環境
+-- 非推奨: このファイルは旧仕様（休憩打刻あり）向けです
+-- Phase1確定書準拠の現行環境では実行しないでください
+-- 代わりに supabase-hotfix-phase1-alignment.sql を使用してください
 
 ALTER TABLE attendance
   ADD COLUMN IF NOT EXISTS break_started_at TIMESTAMPTZ;
