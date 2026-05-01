@@ -14,6 +14,7 @@ export interface Attendance {
   date: string
   clock_in: string | null
   clock_out: string | null
+  break_started_at: string | null
   work_minutes: number | null
   break_minutes: number
   status: 'present' | 'absent' | 'late' | 'early_leave' | 'holiday'
