@@ -76,3 +76,15 @@ npm run start
 
 - 管理者画面にアクセスするには、`profiles.role` を `admin` に設定してください。
 - 勤務時間は「退勤時刻 - 出勤時刻 - 休憩時間」で計算します。
+
+## 管理者ユーザー設定手順
+
+初回は全ユーザーが `member` で作成されます。管理者にしたいユーザーを 1 名選び、Supabase SQL Editor で次を実行してください。
+
+```sql
+update profiles
+set role = 'admin'
+where id = '対象ユーザーのUUID';
+```
+
+`対象ユーザーのUUID` は Supabase の `auth.users` もしくは `profiles` テーブルから確認できます。
