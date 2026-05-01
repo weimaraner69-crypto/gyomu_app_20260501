@@ -51,6 +51,7 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
   const [today, setToday] = useState<Attendance | null>(null)
   const [now, setNow] = useState(new Date())
   const [loading, setLoading] = useState(false)
+  const [isMonthClosed, setIsMonthClosed] = useState(false)
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000)
@@ -60,20 +61,34 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
   useEffect(() => {
     const fetchToday = async () => {
       const supabase = createClient()
+      const businessDate = getBusinessDate(new Date())
       let query = supabase
         .from('attendance')
         .select('*')
         .eq('user_id', userId)
-        .eq('date', getBusinessDate(new Date()))
+        .eq('date', businessDate)
       query = storeId ? query.eq('store_id', storeId) : query.is('store_id', null)
       const { data } = await query.single()
       setToday(data)
+
+      if (storeId) {
+        const month = `${businessDate.slice(0, 7)}-01`
+        const { data: closing } = await supabase
+          .from('monthly_closings')
+          .select('is_closed')
+          .eq('store_id', storeId)
+          .eq('month', month)
+          .maybeSingle<{ is_closed: boolean }>()
+        setIsMonthClosed(!!closing?.is_closed)
+      } else {
+        setIsMonthClosed(false)
+      }
     }
     fetchToday()
   }, [userId, storeId])
 
   const handleClockIn = async () => {
-    if (!storeId) return
+    if (!storeId || isMonthClosed) return
     setLoading(true)
     const supabase = createClient()
     try {
@@ -91,7 +106,7 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
   }
 
   const handleClockOut = async () => {
-    if (!today?.clock_in || !storeId) return
+    if (!today?.clock_in || !storeId || isMonthClosed) return
     setLoading(true)
     const supabase = createClient()
     try {
@@ -129,6 +144,9 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
           {!storeId && (
             <p className="text-amber-700">店舗所属が未設定のため打刻できません</p>
           )}
+          {storeId && isMonthClosed && (
+            <p className="text-amber-700">当月は締め済みのため打刻できません</p>
+          )}
           {today?.clock_in && (
             <p>出勤: <span className="font-semibold">{format(new Date(today.clock_in), 'HH:mm')}</span></p>
           )}
@@ -140,7 +158,7 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
         {!today?.clock_in ? (
           <Button
             onClick={handleClockIn}
-            disabled={loading || !storeId}
+            disabled={loading || !storeId || isMonthClosed}
             size="lg"
             className="w-full bg-green-600 hover:bg-green-700 text-white text-lg font-bold tracking-widest"
           >
@@ -149,7 +167,7 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
         ) : !today?.clock_out ? (
           <Button
             onClick={handleClockOut}
-            disabled={loading || !storeId}
+            disabled={loading || !storeId || isMonthClosed}
             size="lg"
             variant="outline"
             className="w-full border-red-300 text-red-600 hover:bg-red-50 text-lg font-bold tracking-widest"

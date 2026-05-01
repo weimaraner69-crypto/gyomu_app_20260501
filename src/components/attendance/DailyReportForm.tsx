@@ -17,10 +17,24 @@ export function DailyReportForm({ userId, storeId, date }: { userId: string; sto
   const [existing, setExisting] = useState<DailyReport | null>(null)
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [isMonthClosed, setIsMonthClosed] = useState(false)
 
   useEffect(() => {
     const fetch = async () => {
       const supabase = createClient()
+      if (storeId) {
+        const month = `${date.slice(0, 7)}-01`
+        const { data: closing } = await supabase
+          .from('monthly_closings')
+          .select('is_closed')
+          .eq('store_id', storeId)
+          .eq('month', month)
+          .maybeSingle<{ is_closed: boolean }>()
+        setIsMonthClosed(!!closing?.is_closed)
+      } else {
+        setIsMonthClosed(false)
+      }
+
       let query = supabase
         .from('daily_reports')
         .select('*')
@@ -44,7 +58,7 @@ export function DailyReportForm({ userId, storeId, date }: { userId: string; sto
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!storeId) return
+    if (!storeId || isMonthClosed) return
     setLoading(true)
     const supabase = createClient()
     try {
@@ -78,6 +92,16 @@ export function DailyReportForm({ userId, storeId, date }: { userId: string; sto
       <Card className="shadow-sm">
         <CardContent className="pt-6 text-center py-10">
           <p className="text-amber-700 font-medium">店舗所属が未設定のため日報を提出できません</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (isMonthClosed) {
+    return (
+      <Card className="shadow-sm">
+        <CardContent className="pt-6 text-center py-10">
+          <p className="text-amber-700 font-medium">当月は締め済みのため日報を提出できません</p>
         </CardContent>
       </Card>
     )

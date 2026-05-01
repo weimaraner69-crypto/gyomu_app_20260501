@@ -61,6 +61,20 @@ CREATE TABLE daily_reports (
   UNIQUE(user_id, store_id, date)
 );
 
+-- 月次締め
+CREATE TABLE monthly_closings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  month DATE NOT NULL,
+  is_closed BOOLEAN NOT NULL DEFAULT FALSE,
+  closed_at TIMESTAMPTZ,
+  closed_by UUID REFERENCES auth.users(id),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(store_id, month)
+);
+
 -- 監査ログ（勤務修正履歴）
 CREATE TABLE audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -81,6 +95,7 @@ ALTER TABLE stores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_store_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE monthly_closings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- ロール取得（SECURITY DEFINERでRLS再帰を回避）
@@ -124,13 +139,34 @@ AS $$
   END;
 $$;
 
+-- 月次締め判定
+CREATE OR REPLACE FUNCTION public.is_month_closed(target_store_id UUID, target_date DATE)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN target_store_id IS NULL OR target_date IS NULL THEN FALSE
+    ELSE EXISTS (
+      SELECT 1
+      FROM public.monthly_closings mc
+      WHERE mc.store_id = target_store_id
+        AND mc.month = date_trunc('month', target_date)::date
+        AND mc.is_closed = TRUE
+    )
+  END;
+$$;
+
 REVOKE ALL ON FUNCTION public.current_role() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.is_management_role() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.can_access_store(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_month_closed(UUID, DATE) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.current_role() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_management_role() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.can_access_store(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_month_closed(UUID, DATE) TO authenticated;
 
 -- profiles: 自分のデータ更新は許可
 CREATE POLICY "自分のプロフィール更新" ON profiles
@@ -274,6 +310,64 @@ CREATE POLICY "日報更新ルール" ON daily_reports
       AND (store_id IS NULL OR public.can_access_store(store_id))
     )
   );
+
+-- monthly_closings: 管理ロール参照
+CREATE POLICY "月次締め参照ルール" ON monthly_closings
+  FOR SELECT
+  USING (
+    public.current_role() IN ('owner', 'labor_consultant')
+    OR (
+      public.current_role() = 'manager'
+      AND public.can_access_store(store_id)
+    )
+  );
+
+-- monthly_closings: 締め/解除はowner/managerのみ
+CREATE POLICY "月次締め登録更新ルール" ON monthly_closings
+  FOR INSERT
+  WITH CHECK (
+    public.current_role() IN ('owner', 'manager')
+    AND public.can_access_store(store_id)
+  );
+
+CREATE POLICY "月次締め更新ルール" ON monthly_closings
+  FOR UPDATE
+  USING (
+    public.current_role() IN ('owner', 'manager')
+    AND public.can_access_store(store_id)
+  )
+  WITH CHECK (
+    public.current_role() IN ('owner', 'manager')
+    AND public.can_access_store(store_id)
+  );
+
+-- 締め済み月への書き込みを禁止
+CREATE OR REPLACE FUNCTION public.block_write_on_closed_month()
+RETURNS TRIGGER AS $$
+DECLARE
+  target_store UUID;
+  target_date DATE;
+BEGIN
+  target_store := COALESCE(NEW.store_id, OLD.store_id);
+  target_date := COALESCE(NEW.date, OLD.date);
+
+  IF public.is_month_closed(target_store, target_date) THEN
+    RAISE EXCEPTION 'この月は締め済みのため更新できません';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+DROP TRIGGER IF EXISTS attendance_monthly_close_block_trigger ON attendance;
+CREATE TRIGGER attendance_monthly_close_block_trigger
+BEFORE INSERT OR UPDATE ON attendance
+FOR EACH ROW EXECUTE FUNCTION public.block_write_on_closed_month();
+
+DROP TRIGGER IF EXISTS daily_reports_monthly_close_block_trigger ON daily_reports;
+CREATE TRIGGER daily_reports_monthly_close_block_trigger
+BEFORE INSERT OR UPDATE ON daily_reports
+FOR EACH ROW EXECUTE FUNCTION public.block_write_on_closed_month();
 
 -- audit_logs: 管理ロールは店舗スコープで閲覧可能
 CREATE POLICY "監査ログ参照ルール" ON audit_logs

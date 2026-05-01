@@ -188,6 +188,76 @@ async function updateAttendanceAction(formData: FormData) {
   revalidatePath('/admin')
 }
 
+async function setMonthlyCloseAction(formData: FormData) {
+  'use server'
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || !['owner', 'manager'].includes(profile.role)) {
+    redirect('/admin')
+  }
+
+  const storeId = String(formData.get('store_id') ?? '')
+  const month = String(formData.get('month') ?? '')
+  const mode = String(formData.get('mode') ?? 'close')
+  const note = String(formData.get('note') ?? '').trim()
+
+  if (!storeId || !month) {
+    revalidatePath('/admin')
+    return
+  }
+
+  if (mode === 'open') {
+    await supabase
+      .from('monthly_closings')
+      .upsert({
+        store_id: storeId,
+        month,
+        is_closed: false,
+        closed_at: null,
+        closed_by: null,
+        note: note || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'store_id,month' })
+  } else {
+    await supabase
+      .from('monthly_closings')
+      .upsert({
+        store_id: storeId,
+        month,
+        is_closed: true,
+        closed_at: new Date().toISOString(),
+        closed_by: user.id,
+        note: note || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'store_id,month' })
+  }
+
+  revalidatePath('/admin')
+}
+
+type StoreRow = {
+  id: string
+  name: string
+}
+
+type MonthlyClosingRow = {
+  store_id: string
+  month: string
+  is_closed: boolean
+  closed_at: string | null
+  closed_by: string | null
+  note: string | null
+}
+
 export default async function AdminPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -207,6 +277,7 @@ export default async function AdminPage() {
   const firstDay = `${year}-${month}-01`
   const lastDay = `${year}-${month}-31`
   const businessDate = getBusinessDate(now)
+  const monthStart = firstDay
 
   const { data: records } = await supabase
     .from('attendance')
@@ -221,6 +292,21 @@ export default async function AdminPage() {
   )
   const userIds = Array.from(new Set(typedRecords.map((row) => row.user_id)))
 
+  const { data: storeRowsRaw } = await supabase
+    .from('stores')
+    .select('id, name')
+    .order('name', { ascending: true })
+
+  const storeRows = (storeRowsRaw ?? []) as StoreRow[]
+
+  const { data: closingRowsRaw } = await supabase
+    .from('monthly_closings')
+    .select('store_id, month, is_closed, closed_at, closed_by, note')
+    .eq('month', monthStart)
+
+  const closingRows = (closingRowsRaw ?? []) as MonthlyClosingRow[]
+  const closedStoreIds = new Set(closingRows.filter((row) => row.is_closed).map((row) => row.store_id))
+
   const { data: auditRowsRaw } = await supabase
     .from('audit_logs')
     .select('id, table_name, action, actor_user_id, target_user_id, changed_at, before_data, after_data')
@@ -232,7 +318,10 @@ export default async function AdminPage() {
   const actorIds = auditRows
     .flatMap((row) => [row.actor_user_id, row.target_user_id])
     .filter((id): id is string => !!id)
-  const allProfileIds = Array.from(new Set([...userIds, ...actorIds]))
+  const closingActorIds = closingRows
+    .map((row) => row.closed_by)
+    .filter((id): id is string => !!id)
+  const allProfileIds = Array.from(new Set([...userIds, ...actorIds, ...closingActorIds]))
 
   const { data: profileRows } = allProfileIds.length
     ? await supabase
@@ -281,6 +370,65 @@ export default async function AdminPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        {/* 月次締め */}
+        <div>
+          <h2 className="text-sm font-medium text-slate-500 mb-3">月次締め</h2>
+          <Card className="shadow-sm">
+            <CardContent className="pt-6 space-y-3">
+              {storeRows.map((store) => {
+                const closeInfo = closingRows.find((row) => row.store_id === store.id)
+                const isClosed = !!closeInfo?.is_closed
+                const closer = closeInfo?.closed_by ? profileMap.get(closeInfo.closed_by) : null
+
+                return (
+                  <form key={store.id} action={setMonthlyCloseAction} className="grid grid-cols-1 md:grid-cols-8 gap-2 items-center rounded-md border border-slate-200 p-3">
+                    <input type="hidden" name="store_id" value={store.id} />
+                    <input type="hidden" name="month" value={monthStart} />
+
+                    <div className="md:col-span-2">
+                      <p className="text-sm font-medium">{store.name}</p>
+                      <p className="text-xs text-slate-500">対象月: {format(new Date(monthStart + 'T00:00:00'), 'yyyy年MM月', { locale: ja })}</p>
+                    </div>
+
+                    <div className="md:col-span-3 text-xs text-slate-600">
+                      {isClosed ? (
+                        <>
+                          <p>状態: 締め済み</p>
+                          <p>実行者: {closer?.full_name ?? '-'}</p>
+                          <p>日時: {closeInfo?.closed_at ? format(new Date(closeInfo.closed_at), 'M/d HH:mm', { locale: ja }) : '-'}</p>
+                        </>
+                      ) : (
+                        <p>状態: 未締め</p>
+                      )}
+                    </div>
+
+                    <input
+                      type="text"
+                      name="note"
+                      defaultValue={closeInfo?.note ?? ''}
+                      placeholder="メモ（任意）"
+                      className="h-8 rounded-md border border-slate-300 px-2 text-xs md:col-span-2"
+                    />
+
+                    {canEditAttendance ? (
+                      isClosed ? (
+                        <Button type="submit" size="sm" variant="outline" name="mode" value="open" className="md:col-span-1">締め解除</Button>
+                      ) : (
+                        <Button type="submit" size="sm" name="mode" value="close" className="md:col-span-1">締め実行</Button>
+                      )
+                    ) : (
+                      <p className="text-xs text-slate-500 md:col-span-1">権限なし</p>
+                    )}
+                  </form>
+                )
+              })}
+              {storeRows.length === 0 && (
+                <p className="text-sm text-slate-500">対象店舗がありません</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
         {/* 未退勤アラート */}
         {unclockedRecords.length > 0 && (
           <div>
@@ -292,6 +440,7 @@ export default async function AdminPage() {
               <CardContent className="space-y-3">
                 {unclockedRecords.map((row) => {
                   const rowProfile = profileMap.get(row.user_id)
+                  const rowClosed = !!row.store_id && closedStoreIds.has(row.store_id)
                   return (
                     <form key={row.id} action={updateAttendanceAction} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-center rounded-md border border-red-100 p-3 bg-red-50/40">
                       <input type="hidden" name="id" value={row.id} />
@@ -305,11 +454,13 @@ export default async function AdminPage() {
                       <input
                         type="time"
                         name="clock_out_time"
+                        disabled={rowClosed}
                         className="h-8 rounded-md border border-slate-300 px-2 text-xs"
                       />
                       <select
                         name="status"
                         defaultValue={row.status}
+                        disabled={rowClosed}
                         className="h-8 rounded-md border border-slate-300 px-2 text-xs"
                       >
                         <option value="present">出勤</option>
@@ -323,9 +474,14 @@ export default async function AdminPage() {
                         name="note"
                         defaultValue={row.note ?? ''}
                         placeholder="未退勤の補正理由"
+                        disabled={rowClosed}
                         className="h-8 rounded-md border border-slate-300 px-2 text-xs"
                       />
-                      <Button type="submit" size="sm" className="md:col-span-1">補正保存</Button>
+                      {rowClosed ? (
+                        <p className="text-xs text-red-700">締め済みのため補正不可</p>
+                      ) : (
+                        <Button type="submit" size="sm" className="md:col-span-1">補正保存</Button>
+                      )}
                     </form>
                   )
                 })}
@@ -377,6 +533,7 @@ export default async function AdminPage() {
                 {typedRecords.map((row) => {
                   const rowProfile = profileMap.get(row.user_id)
                   const st = STATUS_LABEL[row.status] ?? { label: row.status, variant: 'outline' as const }
+                  const rowClosed = !!row.store_id && closedStoreIds.has(row.store_id)
                   return (
                     <TableRow key={row.id}>
                       <TableCell className="text-sm">{format(new Date(row.date + 'T00:00:00'), 'M/d (E)', { locale: ja })}</TableCell>
@@ -390,9 +547,12 @@ export default async function AdminPage() {
                         {!!row.clock_in && !row.clock_out && row.date < businessDate && (
                           <Badge variant="destructive" className="ml-2">未退勤</Badge>
                         )}
+                        {rowClosed && (
+                          <Badge variant="outline" className="ml-2">締め済み</Badge>
+                        )}
                       </TableCell>
                       <TableCell>
-                        {canEditAttendance ? (
+                        {canEditAttendance && !rowClosed ? (
                           <form action={updateAttendanceAction} className="grid grid-cols-2 gap-2 min-w-[320px]">
                             <input type="hidden" name="id" value={row.id} />
                             <input type="hidden" name="date" value={row.date} />
@@ -428,6 +588,8 @@ export default async function AdminPage() {
                             />
                             <Button type="submit" size="sm" className="col-span-2">保存</Button>
                           </form>
+                        ) : rowClosed ? (
+                          <p className="text-xs text-slate-500">締め済みのため修正不可</p>
                         ) : (
                           <p className="text-xs text-slate-500">修正権限なし</p>
                         )}
