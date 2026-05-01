@@ -439,6 +439,49 @@ async function addWageHistoryAction(formData: FormData) {
   revalidatePath('/admin')
 }
 
+async function upsertTransportCostAction(formData: FormData) {
+  'use server'
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || !['owner', 'manager'].includes(profile.role)) {
+    redirect('/admin')
+  }
+
+  const targetId = String(formData.get('target_id') ?? '')
+  const month = String(formData.get('month') ?? '')
+  const amountRaw = String(formData.get('amount') ?? '0')
+  const note = String(formData.get('note') ?? '').trim()
+
+  if (!targetId || !month) {
+    revalidatePath('/admin')
+    return
+  }
+
+  const amount = parseInt(amountRaw, 10)
+  if (isNaN(amount) || amount < 0) {
+    revalidatePath('/admin')
+    return
+  }
+
+  await supabase
+    .from('monthly_transport_costs')
+    .upsert(
+      { user_id: targetId, month, amount, note: note || null, updated_by: user.id, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,month' }
+    )
+
+  revalidatePath('/admin')
+}
+
 type StoreRow = {
   id: string
   name: string
@@ -572,6 +615,18 @@ export default async function AdminPage() {
     if (!wageHistoryMap.has(wh.user_id)) wageHistoryMap.set(wh.user_id, [])
     wageHistoryMap.get(wh.user_id)!.push(wh)
   }
+
+  // 交通費
+  type TransportCostRow = { user_id: string; amount: number; note: string | null }
+  const { data: transportRaw } = empIds.length
+    ? await supabase
+      .from('monthly_transport_costs')
+      .select('user_id, amount, note')
+      .in('user_id', empIds)
+      .eq('month', monthStart)
+    : { data: [] }
+  const transportCosts = (transportRaw ?? []) as TransportCostRow[]
+  const transportMap = new Map(transportCosts.map((t) => [t.user_id, t]))
 
   // 月間集計
   const summary: Record<string, { name: string; department: string | null; workDays: number; totalMinutes: number }> = {}
@@ -815,6 +870,67 @@ export default async function AdminPage() {
             )}
           </div>
         </div>
+
+        {/* 交通費入力 */}
+        {canEditAttendance && (
+          <div>
+            <h2 className="text-sm font-medium text-slate-500 mb-3">
+              交通費入力 — {format(new Date(monthStart + 'T00:00:00'), 'yyyy年MM月', { locale: ja })}
+            </h2>
+            <Card className="shadow-sm">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>名前</TableHead>
+                    <TableHead>現在の金額</TableHead>
+                    <TableHead>金額 / メモ</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allEmployees.filter((e) => e.is_active !== false).map((emp) => {
+                    const current = transportMap.get(emp.id)
+                    return (
+                      <TableRow key={emp.id}>
+                        <TableCell className="text-sm font-medium">{emp.full_name}</TableCell>
+                        <TableCell className="text-sm text-slate-500">
+                          {current ? `¥${current.amount.toLocaleString()}` : '-'}
+                        </TableCell>
+                        <TableCell>
+                          <form action={upsertTransportCostAction} className="flex gap-1 items-center">
+                            <input type="hidden" name="target_id" value={emp.id} />
+                            <input type="hidden" name="month" value={monthStart} />
+                            <input
+                              type="number"
+                              name="amount"
+                              defaultValue={current?.amount ?? 0}
+                              min={0}
+                              className="h-7 w-24 rounded-md border border-slate-300 px-2 text-xs"
+                            />
+                            <input
+                              type="text"
+                              name="note"
+                              defaultValue={current?.note ?? ''}
+                              placeholder="メモ"
+                              className="h-7 w-28 rounded-md border border-slate-300 px-2 text-xs"
+                            />
+                            <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">保存</Button>
+                          </form>
+                        </TableCell>
+                        <TableCell></TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {allEmployees.filter((e) => e.is_active !== false).length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-slate-400 py-4">在籍スタッフがいません</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
+          </div>
+        )}
 
         <div>
           <h2 className="text-sm font-medium text-slate-500 mb-3">CSV出力</h2>
