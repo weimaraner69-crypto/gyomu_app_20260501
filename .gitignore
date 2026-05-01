@@ -1,66 +1,41 @@
-# 生成物
-outputs/
-!outputs/.gitkeep
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# ローカルデータ
-data/raw/
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
 
-# 環境変数（秘密情報）
-.env
-.env.local
-.env.*.local
+# testing
+/coverage
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-.venv/
-venv/
+# next.js
+/.next/
+/out/
 
-# pyproject.toml.template は bootstrap.sh のテンプレートとして保持する。
-# pyproject.toml 自体はリポジトリ CI で必要なためコミット対象とする。
-uv.lock
+# production
+/build
 
-# Hypothesis（テスト実行時の自動生成キャッシュ）
-.hypothesis/
+# misc
+.DS_Store
+*.pem
 
-# Node.js
-node_modules/
+# debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.next/
-out/
+.pnpm-debug.log*
 
-# Rust
-target/
+# env files (can opt-in for committing if needed)
+.env*
 
-# Go
-bin/
-pkg/
+# vercel
+.vercel
 
-# IDE / エディタ
-# .vscode/ はリポジトリにコミットする（Codespaces共通化のため）
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-
-# OS
-*.tmp
-*.bak
-*.log
+# typescript
+*.tsbuildinfo
+next-env.d.ts
