@@ -1,0 +1,82 @@
+# =============================================================================
+# pyproject.toml テンプレート
+# =============================================================================
+# このファイルは bootstrap.sh によって pyproject.toml に変換される。
+# {{PLACEHOLDER}} 形式の値は project-config.yml の設定で自動置換される。
+#
+# 使い方:
+#   1. project-config.yml を編集する
+#   2. bash scripts/bootstrap.sh を実行する
+#   3. 生成された pyproject.toml を確認する
+# =============================================================================
+
+[project]
+# {{PROJECT_NAME}}: project-config.yml の project.name に対応（ケバブケース）
+name = "{{PROJECT_NAME}}"
+version = "0.1.0"
+# {{PROJECT_DESCRIPTION}}: project-config.yml の project.description に対応
+description = "{{PROJECT_DESCRIPTION}}"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# OpenTelemetry 計装に必要な依存ライブラリ。
+# プロジェクトで計装を有効化する場合: uv sync --extra observability
+observability = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+# テスト・品質検証に必要な依存ライブラリ。
+# プロジェクトでテストを実行する場合: uv sync --extra testing
+testing = [
+    "pytest>=8.0",
+    "hypothesis>=6.0",
+    "pytest-cov>=4.0",
+    "mutmut>=2.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src 配下のパッケージをすべて含める。
+# プロジェクトで不要なパッケージ（src/sample 等）は削除すること。
+packages = ["src"]
+
+# =============================================================================
+# 運用方針:
+# このファイルは pyproject.toml の参照テンプレートである。
+# 現時点で bootstrap.sh はこのファイルを自動変換しない。
+# プロジェクト初期化後、このテンプレートを参考に pyproject.toml を
+# 手動で編集すること。bootstrap.sh との統合は将来の改善課題。
+# =============================================================================
+
+# =============================================================================
+# 開発ツール設定
+# =============================================================================
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# {{SRC_DIR}}: project-config.yml の source.src_dir に対応（通常 "src"）
+src = ["{{SRC_DIR}}"]
+
+[tool.ruff.lint]
+# タスク02 + タスク03 の和集合。N: pep8-naming を追加。
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "TCH"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+# {{SRC_DIR}}: project-config.yml の source.src_dir に対応
+mypy_path = "{{SRC_DIR}}"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mutmut]
+paths_to_mutate = "{{SRC_DIR}}/"
+tests_dir = "tests/"
