@@ -9,6 +9,42 @@ CREATE TABLE IF NOT EXISTS stores (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 既存環境で stores が存在する場合に列不足を補完
+ALTER TABLE stores
+  ADD COLUMN IF NOT EXISTS code TEXT,
+  ADD COLUMN IF NOT EXISTS name TEXT,
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+ALTER TABLE stores
+  ALTER COLUMN is_active SET DEFAULT TRUE,
+  ALTER COLUMN created_at SET DEFAULT NOW();
+
+UPDATE stores
+SET is_active = TRUE
+WHERE is_active IS NULL;
+
+UPDATE stores
+SET created_at = NOW()
+WHERE created_at IS NULL;
+
+-- code が未設定の既存レコードに一意コードを付与
+UPDATE stores
+SET code = CONCAT('store_', SUBSTRING(id::text, 1, 8))
+WHERE code IS NULL OR btrim(code) = '';
+
+ALTER TABLE stores
+  ALTER COLUMN code SET NOT NULL,
+  ALTER COLUMN name SET NOT NULL,
+  ALTER COLUMN is_active SET NOT NULL,
+  ALTER COLUMN created_at SET NOT NULL;
+
+ALTER TABLE stores
+  DROP CONSTRAINT IF EXISTS stores_code_key;
+
+ALTER TABLE stores
+  ADD CONSTRAINT stores_code_key UNIQUE (code);
+
 CREATE TABLE IF NOT EXISTS user_store_memberships (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,

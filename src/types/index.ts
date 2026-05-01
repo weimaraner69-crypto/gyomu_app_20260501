@@ -59,6 +59,19 @@ export interface DailyReport {
   created_at: string
 }
 
+export interface AuditLog {
+  id: string
+  table_name: 'attendance' | 'daily_reports'
+  record_id: string
+  action: 'insert' | 'update' | 'delete'
+  actor_user_id: string | null
+  target_user_id: string | null
+  store_id: string | null
+  changed_at: string
+  before_data: Record<string, unknown> | null
+  after_data: Record<string, unknown> | null
+}
+
 export function formatWorkTime(minutes: number): string {
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60

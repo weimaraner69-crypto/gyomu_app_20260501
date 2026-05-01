@@ -1,5 +1,40 @@
 -- 監査ログ（勤務修正履歴）を追加
 
+-- 依存関数（未作成環境向け）
+CREATE OR REPLACE FUNCTION public.current_role()
+RETURNS TEXT
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT role
+  FROM public.profiles
+  WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.can_access_store(target_store_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN public.current_role() IN ('owner', 'labor_consultant') THEN TRUE
+    WHEN target_store_id IS NULL THEN FALSE
+    ELSE EXISTS (
+      SELECT 1
+      FROM public.user_store_memberships m
+      WHERE m.user_id = auth.uid()
+        AND m.store_id = target_store_id
+    )
+  END;
+$$;
+
+REVOKE ALL ON FUNCTION public.current_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.can_access_store(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.can_access_store(UUID) TO authenticated;
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   table_name TEXT NOT NULL CHECK (table_name IN ('attendance', 'daily_reports')),
