@@ -65,15 +65,18 @@ export default async function HistoryPage({
   // 日報取得
   const { data: reportRaw } = await supabase
     .from('daily_reports')
-    .select('id, date, tasks_done, submitted_at')
+    .select('id, date, tasks_done, achievements, issues, tomorrow_plan, submitted_at, reviewed_at')
     .eq('user_id', user.id)
     .gte('date', firstDay)
     .lte('date', lastDay)
 
+  type ReportRow = Pick<DailyReport, 'id' | 'date' | 'tasks_done' | 'submitted_at' | 'reviewed_at'> & {
+    achievements: string | null
+    issues: string | null
+    tomorrow_plan: string | null
+  }
   const reportMap = new Map(
-    (reportRaw ?? [] as Pick<DailyReport, 'id' | 'date' | 'tasks_done' | 'submitted_at'>[]).map(
-      (r) => [r.date, r]
-    )
+    (reportRaw ?? [] as ReportRow[]).map((r) => [r.date, r])
   )
 
   // 月間集計
@@ -198,7 +201,23 @@ export default async function HistoryPage({
                     </TableCell>
                     <TableCell>
                       {report ? (
-                        <Badge variant="outline" className="text-xs">提出済み</Badge>
+                        <details className="max-w-xs">
+                          <summary className="cursor-pointer select-none">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${
+                              report.reviewed_at
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {report.reviewed_at ? '確認済' : '提出済'}
+                            </span>
+                          </summary>
+                          <div className="mt-1 space-y-1 text-xs text-slate-600 bg-white border border-slate-200 rounded-md p-2">
+                            <p><span className="font-medium">業務内容:</span> {report.tasks_done}</p>
+                            {report.achievements && <p><span className="font-medium">成果:</span> {report.achievements}</p>}
+                            {report.issues && <p><span className="font-medium">課題:</span> {report.issues}</p>}
+                            {report.tomorrow_plan && <p><span className="font-medium">明日の予定:</span> {report.tomorrow_plan}</p>}
+                          </div>
+                        </details>
                       ) : (
                         <span className="text-xs text-slate-400">-</span>
                       )}

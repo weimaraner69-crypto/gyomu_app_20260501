@@ -52,6 +52,10 @@ export interface Attendance {
   night_minutes: number
   status: 'present' | 'absent' | 'late' | 'early_leave' | 'holiday'
   note: string | null
+  clock_in_latitude: number | null
+  clock_in_longitude: number | null
+  clock_out_latitude: number | null
+  clock_out_longitude: number | null
   created_at: string
 }
 

@@ -53,6 +53,17 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
   const [loading, setLoading] = useState(false)
   const [isMonthClosed, setIsMonthClosed] = useState(false)
 
+  async function getPosition(): Promise<{ latitude: number; longitude: number } | null> {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return null
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+        () => resolve(null),
+        { timeout: 5000, maximumAge: 60000 }
+      )
+    })
+  }
+
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(timer)
@@ -92,11 +103,14 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
     setLoading(true)
     const supabase = createClient()
     try {
+      const pos = await getPosition()
       const { data } = await supabase.from('attendance').upsert({
         user_id: userId,
         store_id: storeId,
         date: getBusinessDate(new Date()),
         clock_in: new Date().toISOString(),
+        clock_in_latitude: pos?.latitude ?? null,
+        clock_in_longitude: pos?.longitude ?? null,
         status: 'present'
       }).select().single()
       setToday(data)
@@ -110,6 +124,7 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
     setLoading(true)
     const supabase = createClient()
     try {
+      const pos = await getPosition()
       const clockIn = new Date(today.clock_in)
       const clockOut = new Date()
       const workMinutes = calcMinutesDiff(clockIn, clockOut)
@@ -118,7 +133,9 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
         .update({
           clock_out: clockOut.toISOString(),
           work_minutes: workMinutes,
-          night_minutes: nightMinutes
+          night_minutes: nightMinutes,
+          clock_out_latitude: pos?.latitude ?? null,
+          clock_out_longitude: pos?.longitude ?? null,
         })
         .eq('id', today.id)
         .select().single()

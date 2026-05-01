@@ -29,7 +29,7 @@ export default async function DashboardPage() {
     .eq('user_id', user.id)
     .order('created_at', { ascending: true })
 
-  const typedMemberships = (memberships ?? []) as MembershipRow[]
+  const typedMemberships = (memberships ?? []) as unknown as MembershipRow[]
   const currentStoreId = typedMemberships[0]?.store_id ?? null
   const currentStoreName = typedMemberships[0]?.stores?.name ?? null
 

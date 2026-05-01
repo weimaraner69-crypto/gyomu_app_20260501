@@ -12,6 +12,7 @@ import { ja } from 'date-fns/locale'
 import { canAccessManagement, formatWorkTime } from '@/types'
 import type { Profile } from '@/types'
 import { ResetPasswordButton } from '@/components/admin/ResetPasswordButton'
+import { InviteUserButton } from '@/components/admin/InviteUserButton'
 
 type AttendanceRow = {
   id: string
@@ -482,9 +483,86 @@ async function upsertTransportCostAction(formData: FormData) {
   revalidatePath('/admin')
 }
 
+async function reviewDailyReportAction(formData: FormData) {
+  'use server'
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || !['owner', 'manager'].includes(profile.role)) {
+    redirect('/admin')
+  }
+
+  const reportId = String(formData.get('report_id') ?? '')
+  if (!reportId) { revalidatePath('/admin'); return }
+
+  await supabase
+    .from('daily_reports')
+    .update({ reviewed_at: new Date().toISOString(), reviewed_by: user.id })
+    .eq('id', reportId)
+
+  revalidatePath('/admin')
+}
+
+async function createStoreAction(formData: FormData) {
+  'use server'
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || profile.role !== 'owner') {
+    redirect('/admin')
+  }
+
+  const name = String(formData.get('name') ?? '').trim()
+  const code = String(formData.get('code') ?? '').trim()
+  if (!name || !code) { revalidatePath('/admin'); return }
+
+  await supabase.from('stores').insert({ name, code, is_active: true })
+  revalidatePath('/admin')
+}
+
+async function updateStoreAction(formData: FormData) {
+  'use server'
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || profile.role !== 'owner') {
+    redirect('/admin')
+  }
+
+  const storeId = String(formData.get('store_id') ?? '')
+  const name = String(formData.get('name') ?? '').trim()
+  if (!storeId || !name) { revalidatePath('/admin'); return }
+
+  await supabase.from('stores').update({ name }).eq('id', storeId)
+  revalidatePath('/admin')
+}
+
 type StoreRow = {
   id: string
+  code: string
   name: string
+  is_active: boolean
 }
 
 type MonthlyClosingRow = {
@@ -532,7 +610,7 @@ export default async function AdminPage() {
 
   const { data: storeRowsRaw } = await supabase
     .from('stores')
-    .select('id, name')
+    .select('id, code, name, is_active')
     .order('name', { ascending: true })
 
   const storeRows = (storeRowsRaw ?? []) as StoreRow[]
@@ -592,7 +670,7 @@ export default async function AdminPage() {
     : { data: [] as ProfileSummary[] }
 
   const profileMap = new Map((profileRows ?? []).map((p) => [p.id, p]))
-  const canEditAttendance = profile.role === 'owner' || profile.role === 'manager'
+  const canEditAttendance = profile?.role === 'owner' || profile?.role === 'manager'
 
   // 時給履歴
   const empIds = allEmployees.map((e) => e.id)
@@ -627,6 +705,22 @@ export default async function AdminPage() {
     : { data: [] }
   const transportCosts = (transportRaw ?? []) as TransportCostRow[]
   const transportMap = new Map(transportCosts.map((t) => [t.user_id, t]))
+
+  // 日報（管理者向け）
+  type DailyReportAdminRow = {
+    id: string; user_id: string; date: string; tasks_done: string
+    achievements: string | null; issues: string | null; tomorrow_plan: string | null
+    submitted_at: string | null; reviewed_at: string | null; reviewed_by: string | null
+  }
+  const { data: adminReportsRaw } = await supabase
+    .from('daily_reports')
+    .select('id, user_id, date, tasks_done, achievements, issues, tomorrow_plan, submitted_at, reviewed_at, reviewed_by')
+    .gte('date', firstDay)
+    .lte('date', lastDay)
+    .not('submitted_at', 'is', null)
+    .order('submitted_at', { ascending: false })
+  const adminReports = (adminReportsRaw ?? []) as DailyReportAdminRow[]
+  const unreviewedCount = adminReports.filter((r) => !r.reviewed_at).length
 
   // 月間集計
   const summary: Record<string, { name: string; department: string | null; workDays: number; totalMinutes: number }> = {}
@@ -668,7 +762,10 @@ export default async function AdminPage() {
 
         {/* 従業員マスタ */}
         <div>
-          <h2 className="text-sm font-medium text-slate-500 mb-3">従業員マスタ</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-slate-500">従業員マスタ</h2>
+            {canEditAttendance && <InviteUserButton />}
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {allEmployees.map((emp) => {
               const empStoreIds = membershipMap.get(emp.id) ?? []
@@ -932,6 +1029,81 @@ export default async function AdminPage() {
           </div>
         )}
 
+        {/* 人件費速報 */}
+        {canEditAttendance && (
+          <div>
+            <h2 className="text-sm font-medium text-slate-500 mb-3">
+              人件費速報 — {format(new Date(monthStart + 'T00:00:00'), 'yyyy年MM月', { locale: ja })}
+            </h2>
+            <Card className="shadow-sm overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>名前</TableHead>
+                    <TableHead className="text-right">勤務時間</TableHead>
+                    <TableHead className="text-right">時給</TableHead>
+                    <TableHead className="text-right">人件費概算</TableHead>
+                    <TableHead className="text-right">交通費</TableHead>
+                    <TableHead className="text-right">合計</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allEmployees.filter((e) => e.is_active !== false).map((emp) => {
+                    const totalMinutes = summary[emp.id]?.totalMinutes ?? 0
+                    const hourlyWage = emp.hourly_wage
+                    const laborCost = hourlyWage != null ? Math.floor(totalMinutes / 60 * hourlyWage) : null
+                    const transportCost = transportMap.get(emp.id)?.amount ?? 0
+                    const total = laborCost != null ? laborCost + transportCost : null
+                    return (
+                      <TableRow key={emp.id}>
+                        <TableCell className="text-sm font-medium">{emp.full_name}</TableCell>
+                        <TableCell className="text-sm text-right">{totalMinutes > 0 ? formatWorkTime(totalMinutes) : '-'}</TableCell>
+                        <TableCell className="text-sm text-right">{hourlyWage != null ? `¥${hourlyWage.toLocaleString()}` : <span className="text-slate-400">未設定</span>}</TableCell>
+                        <TableCell className="text-sm text-right">{laborCost != null ? `¥${laborCost.toLocaleString()}` : '-'}</TableCell>
+                        <TableCell className="text-sm text-right">{transportCost > 0 ? `¥${transportCost.toLocaleString()}` : '-'}</TableCell>
+                        <TableCell className="text-sm text-right font-semibold">{total != null ? `¥${total.toLocaleString()}` : '-'}</TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {(() => {
+                    const activeEmps = allEmployees.filter((e) => e.is_active !== false)
+                    if (activeEmps.length === 0) return null
+                    let grandLaborCost = 0
+                    let grandTransport = 0
+                    let anyWage = false
+                    for (const emp of activeEmps) {
+                      const totalMinutes = summary[emp.id]?.totalMinutes ?? 0
+                      if (emp.hourly_wage != null) {
+                        grandLaborCost += Math.floor(totalMinutes / 60 * emp.hourly_wage)
+                        anyWage = true
+                      }
+                      grandTransport += transportMap.get(emp.id)?.amount ?? 0
+                    }
+                    return (
+                      <TableRow className="bg-slate-50">
+                        <TableCell className="text-sm font-semibold">合計</TableCell>
+                        <TableCell />
+                        <TableCell />
+                        <TableCell className="text-sm text-right font-semibold">{anyWage ? `¥${grandLaborCost.toLocaleString()}` : '-'}</TableCell>
+                        <TableCell className="text-sm text-right font-semibold">{grandTransport > 0 ? `¥${grandTransport.toLocaleString()}` : '-'}</TableCell>
+                        <TableCell className="text-sm text-right font-semibold">{anyWage ? `¥${(grandLaborCost + grandTransport).toLocaleString()}` : '-'}</TableCell>
+                      </TableRow>
+                    )
+                  })()}
+                  {allEmployees.filter((e) => e.is_active !== false).length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-slate-400 py-4">在籍スタッフがいません</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              <div className="px-4 py-2 text-xs text-slate-400 border-t border-slate-100">
+                ※ 時給未設定のスタッフは人件費計算から除外されます。当月の勤務時間に基づく概算値です。
+              </div>
+            </Card>
+          </div>
+        )}
+
         <div>
           <h2 className="text-sm font-medium text-slate-500 mb-3">CSV出力</h2>
           <Card className="shadow-sm">
@@ -950,6 +1122,62 @@ export default async function AdminPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* 店舗管理 */}
+        {profile?.role === 'owner' && (
+          <div>
+            <h2 className="text-sm font-medium text-slate-500 mb-3">店舗管理</h2>
+            <Card className="shadow-sm">
+              <CardContent className="pt-6 space-y-3">
+                {storeRows.map((store) => (
+                  <form key={store.id} action={updateStoreAction} className="flex items-center gap-2">
+                    <input type="hidden" name="store_id" value={store.id} />
+                    <input
+                      type="text"
+                      name="name"
+                      defaultValue={store.name}
+                      required
+                      className="h-8 w-40 rounded-md border border-slate-300 px-2 text-sm"
+                    />
+                    <span className="text-xs text-slate-400">({store.code})</span>
+                    <Button type="submit" size="sm" variant="outline" className="h-8 text-xs">名称更新</Button>
+                  </form>
+                ))}
+                {storeRows.length === 0 && (
+                  <p className="text-sm text-slate-400">店舗が登録されていません</p>
+                )}
+                <div className="pt-2 border-t border-slate-100">
+                  <p className="text-xs text-slate-500 mb-2">新規店舗を追加</p>
+                  <form action={createStoreAction} className="flex items-center gap-2">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-0.5">店舗コード</label>
+                      <input
+                        type="text"
+                        name="code"
+                        required
+                        placeholder="例: store01"
+                        className="h-8 w-28 rounded-md border border-slate-300 px-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-0.5">店舗名</label>
+                      <input
+                        type="text"
+                        name="name"
+                        required
+                        placeholder="例: 渋谷店"
+                        className="h-8 w-36 rounded-md border border-slate-300 px-2 text-sm"
+                      />
+                    </div>
+                    <div className="self-end">
+                      <Button type="submit" size="sm" className="h-8 text-xs">追加</Button>
+                    </div>
+                  </form>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* 月次締め */}
         <div>
@@ -1181,6 +1409,83 @@ export default async function AdminPage() {
                 {typedRecords.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center text-slate-400 py-8">記録がありません</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+
+        {/* 日報レビュー */}
+        <div>
+          <h2 className="text-sm font-medium text-slate-500 mb-3">
+            日報レビュー
+            {unreviewedCount > 0 && (
+              <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                未確認 {unreviewedCount}件
+              </span>
+            )}
+          </h2>
+          <Card className="shadow-sm">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>日付</TableHead>
+                  <TableHead>名前</TableHead>
+                  <TableHead>業務内容</TableHead>
+                  <TableHead>状態</TableHead>
+                  <TableHead>確認</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {adminReports.map((report) => {
+                  const reportProfile = profileMap.get(report.user_id)
+                  return (
+                    <TableRow key={report.id} className={!report.reviewed_at ? 'bg-amber-50/40' : ''}>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {format(new Date(report.date + 'T00:00:00'), 'M/d (E)', { locale: ja })}
+                      </TableCell>
+                      <TableCell className="text-sm font-medium">
+                        {reportProfile?.full_name ?? '不明'}
+                      </TableCell>
+                      <TableCell className="text-sm max-w-xs">
+                        <details>
+                          <summary className="cursor-pointer text-slate-600 hover:text-slate-900 select-none">
+                            {report.tasks_done.slice(0, 30)}{report.tasks_done.length > 30 ? '…' : ''}
+                          </summary>
+                          <div className="mt-1 space-y-1 text-xs text-slate-600">
+                            <p><span className="font-medium">業務内容:</span> {report.tasks_done}</p>
+                            {report.achievements && <p><span className="font-medium">成果:</span> {report.achievements}</p>}
+                            {report.issues && <p><span className="font-medium">課題:</span> {report.issues}</p>}
+                            {report.tomorrow_plan && <p><span className="font-medium">明日の予定:</span> {report.tomorrow_plan}</p>}
+                          </div>
+                        </details>
+                      </TableCell>
+                      <TableCell>
+                        {report.reviewed_at ? (
+                          <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                            確認済み
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                            未確認
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {canEditAttendance && !report.reviewed_at && (
+                          <form action={reviewDailyReportAction}>
+                            <input type="hidden" name="report_id" value={report.id} />
+                            <Button type="submit" size="sm" variant="outline" className="h-7 text-xs">確認済みにする</Button>
+                          </form>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+                {adminReports.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-slate-400 py-8">今月の提出日報はありません</TableCell>
                   </TableRow>
                 )}
               </TableBody>
