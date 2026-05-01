@@ -55,24 +55,30 @@ CREATE POLICY "自分の勤怠のみ" ON attendance FOR ALL USING (auth.uid() = 
 -- daily_reports: 自分のデータのみ
 CREATE POLICY "自分の日報のみ" ON daily_reports FOR ALL USING (auth.uid() = user_id);
 
+-- 管理者判定（SECURITY DEFINERでRLS再帰を回避）
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.profiles
+    WHERE id = auth.uid()
+      AND role = 'admin'
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
 -- 管理者はattendanceとprofilesを全件閲覧可能
 CREATE POLICY "管理者は全員の勤怠を閲覧" ON attendance FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM profiles
-      WHERE profiles.id = auth.uid()
-      AND profiles.role = 'admin'
-    )
-  );
+  USING (public.is_admin());
 
 CREATE POLICY "管理者は全プロフィールを閲覧" ON profiles FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM profiles AS p
-      WHERE p.id = auth.uid()
-      AND p.role = 'admin'
-    )
-  );
+  USING (public.is_admin());
 
 -- ユーザー登録時にprofilesレコードを自動作成するトリガー
 CREATE OR REPLACE FUNCTION handle_new_user()

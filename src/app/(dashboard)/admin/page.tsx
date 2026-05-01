@@ -19,10 +19,12 @@ type AttendanceRow = {
   clock_out: string | null
   work_minutes: number | null
   status: string
-  profiles: {
-    full_name: string
-    department: string | null
-  }
+}
+
+type ProfileSummary = {
+  id: string
+  full_name: string
+  department: string | null
 }
 
 const STATUS_LABEL: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
@@ -54,24 +56,32 @@ export default async function AdminPage() {
 
   const { data: records } = await supabase
     .from('attendance')
-    .select(`
-      *,
-      profiles!inner(full_name, department)
-    `)
+    .select('*')
     .gte('date', firstDay)
     .lte('date', lastDay)
     .order('date', { ascending: false })
 
   const typedRecords = (records ?? []) as AttendanceRow[]
+  const userIds = Array.from(new Set(typedRecords.map((row) => row.user_id)))
+
+  const { data: profileRows } = userIds.length
+    ? await supabase
+      .from('profiles')
+      .select('id, full_name, department')
+      .in('id', userIds)
+    : { data: [] as ProfileSummary[] }
+
+  const profileMap = new Map((profileRows ?? []).map((p) => [p.id, p]))
 
   // 月間集計
   const summary: Record<string, { name: string; department: string | null; workDays: number; totalMinutes: number }> = {}
   typedRecords.forEach((row) => {
     const key = row.user_id
+    const rowProfile = profileMap.get(row.user_id)
     if (!summary[key]) {
       summary[key] = {
-        name: row.profiles.full_name,
-        department: row.profiles.department,
+        name: rowProfile?.full_name ?? '不明なユーザー',
+        department: rowProfile?.department ?? null,
         workDays: 0,
         totalMinutes: 0
       }
@@ -140,12 +150,13 @@ export default async function AdminPage() {
               </TableHeader>
               <TableBody>
                 {typedRecords.map((row) => {
+                  const rowProfile = profileMap.get(row.user_id)
                   const st = STATUS_LABEL[row.status] ?? { label: row.status, variant: 'outline' as const }
                   return (
                     <TableRow key={row.id}>
                       <TableCell className="text-sm">{format(new Date(row.date + 'T00:00:00'), 'M/d (E)', { locale: ja })}</TableCell>
-                      <TableCell className="font-medium text-sm">{row.profiles.full_name}</TableCell>
-                      <TableCell className="text-sm text-slate-500">{row.profiles.department ?? '-'}</TableCell>
+                      <TableCell className="font-medium text-sm">{rowProfile?.full_name ?? '不明なユーザー'}</TableCell>
+                      <TableCell className="text-sm text-slate-500">{rowProfile?.department ?? '-'}</TableCell>
                       <TableCell className="text-sm">{row.clock_in ? format(new Date(row.clock_in), 'HH:mm') : '-'}</TableCell>
                       <TableCell className="text-sm">{row.clock_out ? format(new Date(row.clock_out), 'HH:mm') : '-'}</TableCell>
                       <TableCell className="text-sm">{row.work_minutes != null ? formatWorkTime(row.work_minutes) : '-'}</TableCell>
