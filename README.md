@@ -47,6 +47,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 - `user_store_memberships` テーブル
 - `attendance` テーブル
 - `daily_reports` テーブル
+- `audit_logs` テーブル（監査ログ）
 - RLS ポリシー
 - 新規ユーザー登録時の `profiles` 自動作成トリガー
 
@@ -58,7 +59,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 2. `supabase-hotfix-store-model.sql`
 3. `supabase-hotfix-rls-recursion.sql`
 4. `supabase-hotfix-store-scope-rls.sql`
-5. `supabase-hotfix-phase1-alignment.sql`
+5. `supabase-hotfix-audit-logs.sql`
+6. `supabase-hotfix-phase1-alignment.sql`
 
 これにより、以下が反映されます。
 
@@ -66,6 +68,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 - `stores` / `user_store_memberships` と `store_id`（attendance/daily_reports）を追加
 - `profiles` ポリシーの再帰エラー修正
 - 店舗スコープのRLS（owner/manager/labor_consultant/staff）を適用
+- `audit_logs` テーブルと勤怠/日報の自動監査ログトリガーを追加
 - `attendance.night_minutes` 追加
 - 休憩関連の旧列を未使用化（Phase1仕様に整合）
 
