@@ -48,6 +48,9 @@ export default async function DashboardPage() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-600">{profile?.full_name ?? user.email}</span>
+          <a href="/history">
+            <Button variant="outline" size="sm">勤怠履歴</Button>
+          </a>
           {canAccessManagement(profile?.role) && (
             <a href="/admin">
               <Button variant="outline" size="sm">管理画面</Button>
