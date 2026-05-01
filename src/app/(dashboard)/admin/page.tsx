@@ -60,6 +60,13 @@ const STATUS_LABEL: Record<string, { label: string; variant: 'default' | 'second
   holiday:     { label: '休暇',   variant: 'outline' },
 }
 
+const ROLE_LABEL: Record<string, string> = {
+  owner:            'オーナー',
+  manager:          'マネージャー',
+  labor_consultant: '社労士',
+  staff:            'スタッフ',
+}
+
 const NIGHT_START_HOUR = 22
 const NIGHT_END_HOUR = 5
 
@@ -244,6 +251,81 @@ async function setMonthlyCloseAction(formData: FormData) {
   revalidatePath('/admin')
 }
 
+async function updateEmployeeRoleAction(formData: FormData) {
+  'use server'
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || profile.role !== 'owner') {
+    redirect('/admin')
+  }
+
+  const targetId = String(formData.get('target_id') ?? '')
+  const newRole = String(formData.get('role') ?? '')
+
+  const validRoles = ['owner', 'manager', 'labor_consultant', 'staff']
+  if (!targetId || !validRoles.includes(newRole)) {
+    revalidatePath('/admin')
+    return
+  }
+
+  await supabase
+    .from('profiles')
+    .update({ role: newRole })
+    .eq('id', targetId)
+
+  revalidatePath('/admin')
+}
+
+async function updateStoreMembershipAction(formData: FormData) {
+  'use server'
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || !['owner', 'manager'].includes(profile.role)) {
+    redirect('/admin')
+  }
+
+  const targetId = String(formData.get('target_id') ?? '')
+  const storeId = String(formData.get('store_id') ?? '')
+  const mode = String(formData.get('mode') ?? 'add')
+
+  if (!targetId || !storeId) {
+    revalidatePath('/admin')
+    return
+  }
+
+  if (mode === 'remove') {
+    await supabase
+      .from('user_store_memberships')
+      .delete()
+      .eq('user_id', targetId)
+      .eq('store_id', storeId)
+  } else {
+    await supabase
+      .from('user_store_memberships')
+      .upsert({ user_id: targetId, store_id: storeId }, { onConflict: 'user_id,store_id' })
+  }
+
+  revalidatePath('/admin')
+}
+
 type StoreRow = {
   id: string
   name: string
@@ -314,6 +396,23 @@ export default async function AdminPage() {
     .order('changed_at', { ascending: false })
     .limit(80)
 
+  // 従業員マスタ用: 全プロフィールと所属
+  const { data: allProfilesRaw } = await supabase
+    .from('profiles')
+    .select('id, full_name, department, role')
+    .order('full_name', { ascending: true })
+  const allEmployees = (allProfilesRaw ?? []) as (ProfileSummary & { role: string })[]
+
+  const { data: membershipsRaw } = await supabase
+    .from('user_store_memberships')
+    .select('user_id, store_id')
+  const memberships = (membershipsRaw ?? []) as { user_id: string; store_id: string }[]
+  const membershipMap = new Map<string, string[]>()
+  for (const m of memberships) {
+    if (!membershipMap.has(m.user_id)) membershipMap.set(m.user_id, [])
+    membershipMap.get(m.user_id)!.push(m.store_id)
+  }
+
   const auditRows = (auditRowsRaw ?? []) as AuditRow[]
   const actorIds = auditRows
     .flatMap((row) => [row.actor_user_id, row.target_user_id])
@@ -370,6 +469,106 @@ export default async function AdminPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+
+        {/* 従業員マスタ */}
+        <div>
+          <h2 className="text-sm font-medium text-slate-500 mb-3">従業員マスタ</h2>
+          <Card className="shadow-sm">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>名前</TableHead>
+                  <TableHead>部署</TableHead>
+                  <TableHead>ロール</TableHead>
+                  <TableHead>所属店舗</TableHead>
+                  {canEditAttendance && <TableHead>店舗追加</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {allEmployees.map((emp) => {
+                  const empStoreIds = membershipMap.get(emp.id) ?? []
+                  const empStores = empStoreIds
+                    .map((sid) => storeRows.find((s) => s.id === sid))
+                    .filter((s): s is StoreRow => !!s)
+                  const availableStores = storeRows.filter((s) => !empStoreIds.includes(s.id))
+                  return (
+                    <TableRow key={emp.id}>
+                      <TableCell className="font-medium text-sm">{emp.full_name}</TableCell>
+                      <TableCell className="text-sm text-slate-500">{emp.department ?? '-'}</TableCell>
+                      <TableCell>
+                        {profile.role === 'owner' ? (
+                          <form action={updateEmployeeRoleAction} className="flex gap-1 items-center">
+                            <input type="hidden" name="target_id" value={emp.id} />
+                            <select
+                              name="role"
+                              defaultValue={emp.role}
+                              className="h-7 rounded-md border border-slate-300 px-2 text-xs"
+                            >
+                              <option value="owner">オーナー</option>
+                              <option value="manager">マネージャー</option>
+                              <option value="labor_consultant">社労士</option>
+                              <option value="staff">スタッフ</option>
+                            </select>
+                            <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">変更</Button>
+                          </form>
+                        ) : (
+                          <Badge variant="outline">{ROLE_LABEL[emp.role] ?? emp.role}</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {empStores.map((store) => (
+                            <form key={store.id} action={updateStoreMembershipAction} className="inline-flex">
+                              <input type="hidden" name="target_id" value={emp.id} />
+                              <input type="hidden" name="store_id" value={store.id} />
+                              <input type="hidden" name="mode" value="remove" />
+                              <button
+                                type="submit"
+                                className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700 hover:bg-red-100 hover:text-red-700 transition-colors"
+                              >
+                                {store.name} ×
+                              </button>
+                            </form>
+                          ))}
+                          {empStores.length === 0 && (
+                            <span className="text-xs text-slate-400">未所属</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      {canEditAttendance && (
+                        <TableCell>
+                          {availableStores.length > 0 ? (
+                            <form action={updateStoreMembershipAction} className="flex gap-1 items-center">
+                              <input type="hidden" name="target_id" value={emp.id} />
+                              <input type="hidden" name="mode" value="add" />
+                              <select
+                                name="store_id"
+                                className="h-7 rounded-md border border-slate-300 px-2 text-xs"
+                              >
+                                {availableStores.map((store) => (
+                                  <option key={store.id} value={store.id}>{store.name}</option>
+                                ))}
+                              </select>
+                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">追加</Button>
+                            </form>
+                          ) : (
+                            <span className="text-xs text-slate-400">-</span>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  )
+                })}
+                {allEmployees.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-slate-400 py-8">スタッフが登録されていません</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+
         <div>
           <h2 className="text-sm font-medium text-slate-500 mb-3">CSV出力</h2>
           <Card className="shadow-sm">
