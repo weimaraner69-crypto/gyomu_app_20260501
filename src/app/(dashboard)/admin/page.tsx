@@ -11,6 +11,7 @@ import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { canAccessManagement, formatWorkTime } from '@/types'
 import type { Profile } from '@/types'
+import { ResetPasswordButton } from '@/components/admin/ResetPasswordButton'
 
 type AttendanceRow = {
   id: string
@@ -482,6 +483,7 @@ export default async function AdminPage() {
                   <TableHead>ロール</TableHead>
                   <TableHead>所属店舗</TableHead>
                   {canEditAttendance && <TableHead>店舗追加</TableHead>}
+                  {canEditAttendance && <TableHead>パスワード</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -554,6 +556,11 @@ export default async function AdminPage() {
                           ) : (
                             <span className="text-xs text-slate-400">-</span>
                           )}
+                        </TableCell>
+                      )}
+                      {canEditAttendance && (
+                        <TableCell>
+                          <ResetPasswordButton targetId={emp.id} targetName={emp.full_name} />
                         </TableCell>
                       )}
                     </TableRow>
