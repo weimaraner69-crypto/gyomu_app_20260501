@@ -68,6 +68,12 @@ const ROLE_LABEL: Record<string, string> = {
   staff:            'スタッフ',
 }
 
+const EMPLOYMENT_TYPE_LABEL: Record<string, string> = {
+  full_time: '正社員',
+  part_time: 'アルバイト',
+  contract:  '契約社員',
+}
+
 const NIGHT_START_HOUR = 22
 const NIGHT_END_HOUR = 5
 
@@ -252,6 +258,50 @@ async function setMonthlyCloseAction(formData: FormData) {
   revalidatePath('/admin')
 }
 
+async function updateEmployeeProfileAction(formData: FormData) {
+  'use server'
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single<{ role: string }>()
+
+  if (!profile || !['owner', 'manager'].includes(profile.role)) {
+    redirect('/admin')
+  }
+
+  const targetId = String(formData.get('target_id') ?? '')
+  const nameKana = String(formData.get('name_kana') ?? '').trim()
+  const employmentType = String(formData.get('employment_type') ?? '')
+  const hourlyWageRaw = String(formData.get('hourly_wage') ?? '')
+  const isActive = formData.get('is_active') === '1'
+
+  const validEmploymentTypes = ['full_time', 'part_time', 'contract']
+  if (!targetId || !validEmploymentTypes.includes(employmentType)) {
+    revalidatePath('/admin')
+    return
+  }
+
+  const hourlyWage = hourlyWageRaw ? parseInt(hourlyWageRaw, 10) : null
+
+  await supabase
+    .from('profiles')
+    .update({
+      name_kana: nameKana || null,
+      employment_type: employmentType,
+      hourly_wage: hourlyWage,
+      is_active: isActive,
+    })
+    .eq('id', targetId)
+
+  revalidatePath('/admin')
+}
+
 async function updateEmployeeRoleAction(formData: FormData) {
   'use server'
 
@@ -400,9 +450,15 @@ export default async function AdminPage() {
   // 従業員マスタ用: 全プロフィールと所属
   const { data: allProfilesRaw } = await supabase
     .from('profiles')
-    .select('id, full_name, department, role')
+    .select('id, full_name, name_kana, department, role, employment_type, hourly_wage, is_active')
     .order('full_name', { ascending: true })
-  const allEmployees = (allProfilesRaw ?? []) as (ProfileSummary & { role: string })[]
+  const allEmployees = (allProfilesRaw ?? []) as (ProfileSummary & {
+    role: string
+    name_kana: string | null
+    employment_type: string | null
+    hourly_wage: number | null
+    is_active: boolean
+  })[]
 
   const { data: membershipsRaw } = await supabase
     .from('user_store_memberships')
@@ -474,52 +530,40 @@ export default async function AdminPage() {
         {/* 従業員マスタ */}
         <div>
           <h2 className="text-sm font-medium text-slate-500 mb-3">従業員マスタ</h2>
-          <Card className="shadow-sm">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>名前</TableHead>
-                  <TableHead>部署</TableHead>
-                  <TableHead>ロール</TableHead>
-                  <TableHead>所属店舗</TableHead>
-                  {canEditAttendance && <TableHead>店舗追加</TableHead>}
-                  {canEditAttendance && <TableHead>パスワード</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {allEmployees.map((emp) => {
-                  const empStoreIds = membershipMap.get(emp.id) ?? []
-                  const empStores = empStoreIds
-                    .map((sid) => storeRows.find((s) => s.id === sid))
-                    .filter((s): s is StoreRow => !!s)
-                  const availableStores = storeRows.filter((s) => !empStoreIds.includes(s.id))
-                  return (
-                    <TableRow key={emp.id}>
-                      <TableCell className="font-medium text-sm">{emp.full_name}</TableCell>
-                      <TableCell className="text-sm text-slate-500">{emp.department ?? '-'}</TableCell>
-                      <TableCell>
-                        {profile.role === 'owner' ? (
-                          <form action={updateEmployeeRoleAction} className="flex gap-1 items-center">
-                            <input type="hidden" name="target_id" value={emp.id} />
-                            <select
-                              name="role"
-                              defaultValue={emp.role}
-                              className="h-7 rounded-md border border-slate-300 px-2 text-xs"
-                            >
-                              <option value="owner">オーナー</option>
-                              <option value="manager">マネージャー</option>
-                              <option value="labor_consultant">社労士</option>
-                              <option value="staff">スタッフ</option>
-                            </select>
-                            <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">変更</Button>
-                          </form>
-                        ) : (
-                          <Badge variant="outline">{ROLE_LABEL[emp.role] ?? emp.role}</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {empStores.map((store) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {allEmployees.map((emp) => {
+              const empStoreIds = membershipMap.get(emp.id) ?? []
+              const empStores = empStoreIds
+                .map((sid) => storeRows.find((s) => s.id === sid))
+                .filter((s): s is StoreRow => !!s)
+              const availableStores = storeRows.filter((s) => !empStoreIds.includes(s.id))
+              return (
+                <Card key={emp.id} className={`shadow-sm ${emp.is_active === false ? 'opacity-60' : ''}`}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle className="text-base">{emp.full_name}</CardTitle>
+                        {emp.name_kana && <p className="text-xs text-slate-500 mt-0.5">{emp.name_kana}</p>}
+                      </div>
+                      <div className="flex gap-1 items-center flex-wrap justify-end">
+                        <Badge variant="outline">{ROLE_LABEL[emp.role] ?? emp.role}</Badge>
+                        {emp.is_active === false && <Badge variant="destructive">退職</Badge>}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
+                      <div><span className="text-slate-400">部署:</span> {emp.department ?? '-'}</div>
+                      <div><span className="text-slate-400">雇用形態:</span> {emp.employment_type ? (EMPLOYMENT_TYPE_LABEL[emp.employment_type] ?? emp.employment_type) : '-'}</div>
+                      <div><span className="text-slate-400">時給:</span> {emp.hourly_wage != null ? `¥${emp.hourly_wage.toLocaleString()}` : '-'}</div>
+                    </div>
+
+                    {/* 所属店舗 */}
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">所属店舗</p>
+                      <div className="flex flex-wrap gap-1">
+                        {empStores.map((store) => (
+                          canEditAttendance ? (
                             <form key={store.id} action={updateStoreMembershipAction} className="inline-flex">
                               <input type="hidden" name="target_id" value={emp.id} />
                               <input type="hidden" name="store_id" value={store.id} />
@@ -531,49 +575,108 @@ export default async function AdminPage() {
                                 {store.name} ×
                               </button>
                             </form>
-                          ))}
-                          {empStores.length === 0 && (
-                            <span className="text-xs text-slate-400">未所属</span>
-                          )}
-                        </div>
-                      </TableCell>
-                      {canEditAttendance && (
-                        <TableCell>
-                          {availableStores.length > 0 ? (
-                            <form action={updateStoreMembershipAction} className="flex gap-1 items-center">
-                              <input type="hidden" name="target_id" value={emp.id} />
-                              <input type="hidden" name="mode" value="add" />
-                              <select
-                                name="store_id"
-                                className="h-7 rounded-md border border-slate-300 px-2 text-xs"
-                              >
-                                {availableStores.map((store) => (
-                                  <option key={store.id} value={store.id}>{store.name}</option>
-                                ))}
-                              </select>
-                              <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">追加</Button>
-                            </form>
                           ) : (
-                            <span className="text-xs text-slate-400">-</span>
-                          )}
-                        </TableCell>
-                      )}
-                      {canEditAttendance && (
-                        <TableCell>
-                          <ResetPasswordButton targetId={emp.id} targetName={emp.full_name} />
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  )
-                })}
-                {allEmployees.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-slate-400 py-8">スタッフが登録されていません</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </Card>
+                            <span key={store.id} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{store.name}</span>
+                          )
+                        ))}
+                        {canEditAttendance && availableStores.length > 0 && (
+                          <form action={updateStoreMembershipAction} className="inline-flex gap-1 items-center">
+                            <input type="hidden" name="target_id" value={emp.id} />
+                            <input type="hidden" name="mode" value="add" />
+                            <select name="store_id" className="h-6 rounded-md border border-slate-300 px-1 text-xs">
+                              {availableStores.map((store) => (
+                                <option key={store.id} value={store.id}>{store.name}</option>
+                              ))}
+                            </select>
+                            <Button type="submit" size="sm" variant="outline" className="h-6 text-xs px-1.5">追加</Button>
+                          </form>
+                        )}
+                        {empStores.length === 0 && !canEditAttendance && (
+                          <span className="text-xs text-slate-400">未所属</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {canEditAttendance && (
+                      <details className="group">
+                        <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700 select-none">
+                          基本情報を編集 ▸
+                        </summary>
+                        <form action={updateEmployeeProfileAction} className="mt-2 space-y-2">
+                          <input type="hidden" name="target_id" value={emp.id} />
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-slate-500 block mb-0.5">よみがな</label>
+                              <input
+                                type="text"
+                                name="name_kana"
+                                defaultValue={emp.name_kana ?? ''}
+                                placeholder="カタカナ"
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 block mb-0.5">雇用形態</label>
+                              <select
+                                name="employment_type"
+                                defaultValue={emp.employment_type ?? 'part_time'}
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              >
+                                <option value="part_time">アルバイト</option>
+                                <option value="full_time">正社員</option>
+                                <option value="contract">契約社員</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 block mb-0.5">時給（円）</label>
+                              <input
+                                type="number"
+                                name="hourly_wage"
+                                defaultValue={emp.hourly_wage ?? ''}
+                                placeholder="例: 1100"
+                                min={0}
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 block mb-0.5">在籍</label>
+                              <select
+                                name="is_active"
+                                defaultValue={emp.is_active !== false ? '1' : '0'}
+                                className="h-7 w-full rounded-md border border-slate-300 px-2 text-xs"
+                              >
+                                <option value="1">在籍中</option>
+                                <option value="0">退職</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <Button type="submit" size="sm" className="h-7 text-xs">保存</Button>
+                            {profile.role === 'owner' && (
+                              <form action={updateEmployeeRoleAction} className="inline-flex gap-1 items-center">
+                                <input type="hidden" name="target_id" value={emp.id} />
+                                <select name="role" defaultValue={emp.role} className="h-7 rounded-md border border-slate-300 px-2 text-xs">
+                                  <option value="owner">オーナー</option>
+                                  <option value="manager">マネージャー</option>
+                                  <option value="labor_consultant">社労士</option>
+                                  <option value="staff">スタッフ</option>
+                                </select>
+                                <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">ロール変更</Button>
+                              </form>
+                            )}
+                            <ResetPasswordButton targetId={emp.id} targetName={emp.full_name} />
+                          </div>
+                        </form>
+                      </details>
+                    )}
+                  </CardContent>
+                </Card>
+              )
+            })}
+            {allEmployees.length === 0 && (
+              <p className="text-sm text-slate-500 col-span-2">スタッフが登録されていません</p>
+            )}
+          </div>
         </div>
 
         <div>

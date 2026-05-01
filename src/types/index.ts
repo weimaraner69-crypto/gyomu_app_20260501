@@ -6,11 +6,23 @@ export function canAccessManagement(role: UserRole | null | undefined): boolean 
   return !!role && MANAGEMENT_ROLES.includes(role)
 }
 
+export type EmploymentType = 'full_time' | 'part_time' | 'contract'
+
+export const EMPLOYMENT_TYPE_LABEL: Record<EmploymentType, string> = {
+  full_time: '正社員',
+  part_time: 'アルバイト',
+  contract:  '契約社員',
+}
+
 export interface Profile {
   id: string
   full_name: string
+  name_kana: string | null
   department: string | null
   role: UserRole
+  employment_type: EmploymentType | null
+  hourly_wage: number | null
+  is_active: boolean
   created_at: string
 }
 
