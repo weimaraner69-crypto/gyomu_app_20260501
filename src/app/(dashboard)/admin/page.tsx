@@ -370,6 +370,25 @@ export default async function AdminPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        <div>
+          <h2 className="text-sm font-medium text-slate-500 mb-3">CSV出力</h2>
+          <Card className="shadow-sm">
+            <CardContent className="pt-6 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <a href={`/api/admin/attendance/export?month=${monthStart}`}>
+                  <Button size="sm" variant="outline">全店舗CSV</Button>
+                </a>
+                {storeRows.map((store) => (
+                  <a key={store.id} href={`/api/admin/attendance/export?month=${monthStart}&store_id=${store.id}`}>
+                    <Button size="sm" variant="outline">{store.name} CSV</Button>
+                  </a>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">対象月の勤怠一覧をCSV形式で出力します。</p>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* 月次締め */}
         <div>
           <h2 className="text-sm font-medium text-slate-500 mb-3">月次締め</h2>
