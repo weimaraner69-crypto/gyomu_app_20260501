@@ -47,11 +47,23 @@ function calcNightMinutes(clockIn: Date, clockOut: Date): number {
   return total
 }
 
-export function ClockButton({ userId, storeId }: { userId: string; storeId: string | null }) {
+export function ClockButton({
+  userId,
+  stores,
+  defaultStoreId,
+}: {
+  userId: string
+  stores: { id: string; name: string }[]
+  defaultStoreId: string | null
+}) {
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(defaultStoreId)
   const [today, setToday] = useState<Attendance | null>(null)
   const [now, setNow] = useState(new Date())
   const [loading, setLoading] = useState(false)
   const [isMonthClosed, setIsMonthClosed] = useState(false)
+
+  const storeId = selectedStoreId
+  const currentStoreName = stores.find((s) => s.id === storeId)?.name ?? null
 
   async function getPosition(): Promise<{ latitude: number; longitude: number } | null> {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return null
@@ -71,6 +83,7 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
 
   useEffect(() => {
     const fetchToday = async () => {
+      setToday(null)
       const supabase = createClient()
       const businessDate = getBusinessDate(new Date())
       let query = supabase
@@ -156,6 +169,29 @@ export function ClockButton({ userId, storeId }: { userId: string; storeId: stri
             {format(now, 'HH:mm:ss')}
           </p>
         </div>
+
+        {/* 店舗セレクター */}
+        {stores.length > 1 && (
+          <div className="text-left">
+            <label className="block text-xs text-slate-500 mb-1">打刻店舗</label>
+            <select
+              value={storeId ?? ''}
+              onChange={(e) => setSelectedStoreId(e.target.value || null)}
+              disabled={!!today?.clock_in}
+              className="w-full h-9 rounded-md border border-slate-300 px-2 text-sm"
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            {today?.clock_in && (
+              <p className="text-xs text-slate-400 mt-0.5">出勤中は店舗切替不可</p>
+            )}
+          </div>
+        )}
+        {stores.length === 1 && currentStoreName && (
+          <p className="text-sm text-slate-600">店舗: <span className="font-medium">{currentStoreName}</span></p>
+        )}
 
         <div className="text-sm text-slate-600 space-y-1 min-h-[3rem]">
           {!storeId && (

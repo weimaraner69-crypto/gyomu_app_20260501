@@ -12,6 +12,8 @@ type MembershipRow = {
   stores: { name: string } | null
 }
 
+type StoreOption = { id: string; name: string }
+
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -30,8 +32,10 @@ export default async function DashboardPage() {
     .order('created_at', { ascending: true })
 
   const typedMemberships = (memberships ?? []) as unknown as MembershipRow[]
-  const currentStoreId = typedMemberships[0]?.store_id ?? null
-  const currentStoreName = typedMemberships[0]?.stores?.name ?? null
+  const stores: StoreOption[] = typedMemberships
+    .filter((m) => m.stores?.name)
+    .map((m) => ({ id: m.store_id, name: m.stores!.name }))
+  const defaultStoreId = stores[0]?.id ?? null
 
   const today = format(new Date(), 'yyyy-MM-dd')
 
@@ -44,7 +48,6 @@ export default async function DashboardPage() {
           <p className="text-sm text-slate-500">
             {format(new Date(), 'yyyy年MM月dd日 (E)', { locale: ja })}
           </p>
-          {currentStoreName && <p className="text-xs text-slate-500">現在店舗: {currentStoreName}</p>}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-600">{profile?.full_name ?? user.email}</span>
@@ -64,8 +67,8 @@ export default async function DashboardPage() {
 
       {/* メインコンテンツ */}
       <main className="max-w-2xl mx-auto px-6 py-8 space-y-8">
-        <ClockButton userId={user.id} storeId={currentStoreId} />
-        <DailyReportForm userId={user.id} storeId={currentStoreId} date={today} />
+        <ClockButton userId={user.id} stores={stores} defaultStoreId={defaultStoreId} />
+        <DailyReportForm userId={user.id} storeId={defaultStoreId} date={today} />
       </main>
     </div>
   )

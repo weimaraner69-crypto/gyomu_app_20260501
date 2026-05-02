@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from '@/components/ui/table'
-import { format } from 'date-fns'
+import { format, subMonths, addMonths, startOfMonth } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { canAccessManagement, formatWorkTime } from '@/types'
 import type { Profile } from '@/types'
@@ -574,7 +574,11 @@ type MonthlyClosingRow = {
   note: string | null
 }
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>
+}) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -588,12 +592,26 @@ export default async function AdminPage() {
   if (!canAccessManagement(profile?.role)) redirect('/dashboard')
 
   const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const params = await searchParams
+  let targetDate: Date
+  if (params.month) {
+    const parsed = new Date(params.month + '-01T00:00:00')
+    targetDate = isNaN(parsed.getTime()) ? startOfMonth(now) : startOfMonth(parsed)
+  } else {
+    targetDate = startOfMonth(now)
+  }
+  const isCurrentMonth = format(targetDate, 'yyyy-MM') === format(now, 'yyyy-MM')
+  const isFutureMonth = targetDate > startOfMonth(now)
+  if (isFutureMonth) targetDate = startOfMonth(now)
+
+  const year = targetDate.getFullYear()
+  const month = String(targetDate.getMonth() + 1).padStart(2, '0')
   const firstDay = `${year}-${month}-01`
   const lastDay = `${year}-${month}-31`
   const businessDate = getBusinessDate(now)
   const monthStart = firstDay
+  const prevMonth = format(subMonths(targetDate, 1), 'yyyy-MM')
+  const nextMonth = format(addMonths(targetDate, 1), 'yyyy-MM')
 
   const { data: records } = await supabase
     .from('attendance')
@@ -745,7 +763,7 @@ export default async function AdminPage() {
         <div>
           <h1 className="text-lg font-semibold text-slate-900">管理画面</h1>
           <p className="text-sm text-slate-500">
-            {format(now, 'yyyy年MM月', { locale: ja })} の勤怠
+            {format(targetDate, 'yyyy年MM月', { locale: ja })} の勤怠
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -757,6 +775,28 @@ export default async function AdminPage() {
           </form>
         </div>
       </header>
+
+      {/* 月ナビゲーション */}
+      <div className="bg-white border-b border-slate-100 px-6 py-2 flex items-center justify-center gap-4">
+        <a href={`/admin?month=${prevMonth}`}>
+          <Button variant="ghost" size="sm">← 前月</Button>
+        </a>
+        <span className="text-sm font-semibold text-slate-800 w-28 text-center">
+          {format(targetDate, 'yyyy年MM月', { locale: ja })}
+        </span>
+        {!isCurrentMonth ? (
+          <a href={`/admin?month=${nextMonth}`}>
+            <Button variant="ghost" size="sm">翌月 →</Button>
+          </a>
+        ) : (
+          <Button variant="ghost" size="sm" disabled>翌月 →</Button>
+        )}
+        {!isCurrentMonth && (
+          <a href="/admin">
+            <Button variant="outline" size="sm" className="text-xs h-7">今月に戻る</Button>
+          </a>
+        )}
+      </div>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
 
